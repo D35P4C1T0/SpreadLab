@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check default features
+        run: cargo check --locked
+
+      - name: Check WebUI feature
+        run: cargo check --locked --features webui
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --features webui -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --features webui
