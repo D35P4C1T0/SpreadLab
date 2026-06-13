@@ -1,5 +1,5 @@
 use crate::stats::{StatError, StatPoints, MAX_STAT_POINTS, MAX_TOTAL_STAT_POINTS};
-use damage_calc::Nature;
+use damage_calc::{Nature, StatusCondition};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -35,13 +35,30 @@ pub struct ParsedSet {
     pub moves: Vec<String>,
     pub training_format: Option<TrainingFormat>,
     pub stat_points: StatPoints,
+    pub status: StatusCondition,
+    pub ability_on: bool,
+    pub supreme_overlord_allies: u8,
+    pub rivalry: Option<RivalryMode>,
+    pub move_targets_single_target: bool,
     pub original_text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RivalryMode {
+    SameGender,
+    OppositeGender,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct TrainingLine<'a> {
     format: TrainingFormat,
     payload: &'a str,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ParsedTrainingValue {
+    value: u16,
+    nature_hint: Option<Nature>,
 }
 
 pub fn champions_points_from_ev(value: u16) -> u16 {
@@ -62,7 +79,6 @@ pub fn parse_set(text: &str) -> Result<ParsedSet, ShowdownError> {
     let species = parse_species(&normalized).unwrap_or_default();
     let item = parse_item(&normalized);
     let ability = parse_prefixed_line(&normalized, "Ability:");
-    let nature = parse_nature(&normalized)?.unwrap_or(Nature::Hardy);
     let tera_type = parse_prefixed_line(&normalized, "Tera Type:");
     let moves = normalized
         .lines()
@@ -72,7 +88,19 @@ pub fn parse_set(text: &str) -> Result<ParsedSet, ShowdownError> {
         .map(ToOwned::to_owned)
         .collect();
 
-    let (training_format, stat_points) = parse_training(&normalized)?;
+    let (training_format, stat_points, nature_hint) = parse_training(&normalized)?;
+    let nature = parse_nature(&normalized)?
+        .or(nature_hint)
+        .unwrap_or(Nature::Hardy);
+    let status = parse_status(&normalized);
+    let ability_on = parse_bool_line(&normalized, "Ability On:").unwrap_or(false);
+    let supreme_overlord_allies = parse_u8_line(&normalized, "Supreme Overlord Allies:")
+        .or_else(|| parse_u8_line(&normalized, "Fainted Allies:"))
+        .unwrap_or(0);
+    let rivalry = parse_rivalry(&normalized);
+    let move_targets_single_target = parse_prefixed_line(&normalized, "Target:")
+        .map(|value| normalize_key(&value).contains("single"))
+        .unwrap_or(false);
 
     Ok(ParsedSet {
         species,
@@ -83,6 +111,11 @@ pub fn parse_set(text: &str) -> Result<ParsedSet, ShowdownError> {
         moves,
         training_format,
         stat_points,
+        status,
+        ability_on,
+        supreme_overlord_allies,
+        rivalry,
+        move_targets_single_target,
         original_text: normalized,
     })
 }
@@ -95,10 +128,12 @@ pub fn build_approximate_legacy_ev_line(points: StatPoints) -> String {
     build_training_line("EVs", points, approximate_ev_from_champions)
 }
 
-fn parse_training(text: &str) -> Result<(Option<TrainingFormat>, StatPoints), ShowdownError> {
+fn parse_training(
+    text: &str,
+) -> Result<(Option<TrainingFormat>, StatPoints, Option<Nature>), ShowdownError> {
     let lines = collect_training_lines(text);
     if lines.is_empty() {
-        return Ok((None, StatPoints::default()));
+        return Ok((None, StatPoints::default(), None));
     }
     if lines.len() > 1 {
         let has_evs = lines.iter().any(|line| line.format == TrainingFormat::Evs);
@@ -111,20 +146,24 @@ fn parse_training(text: &str) -> Result<(Option<TrainingFormat>, StatPoints), Sh
     }
 
     let line = lines[0];
-    let points = match line.format {
+    let (points, nature_hint) = match line.format {
         TrainingFormat::Evs => parse_evs_payload(line.payload)?,
         TrainingFormat::Sps => parse_sps_payload(line.payload)?,
     };
     points.validate()?;
 
-    Ok((Some(line.format), points))
+    Ok((Some(line.format), points, nature_hint))
 }
 
-fn parse_evs_payload(payload: &str) -> Result<StatPoints, ShowdownError> {
-    parse_training_payload(payload, 252, champions_points_from_ev, "EVs")
+fn parse_evs_payload(payload: &str) -> Result<(StatPoints, Option<Nature>), ShowdownError> {
+    if evs_payload_looks_like_champions_points(payload) {
+        parse_training_payload(payload, MAX_STAT_POINTS, |value| value, "EVs")
+    } else {
+        parse_training_payload(payload, 252, champions_points_from_ev, "EVs")
+    }
 }
 
-fn parse_sps_payload(payload: &str) -> Result<StatPoints, ShowdownError> {
+fn parse_sps_payload(payload: &str) -> Result<(StatPoints, Option<Nature>), ShowdownError> {
     parse_training_payload(payload, MAX_STAT_POINTS, |value| value, "SPs")
 }
 
@@ -133,9 +172,10 @@ fn parse_training_payload(
     max_value: u16,
     convert: impl Fn(u16) -> u16,
     label: &'static str,
-) -> Result<StatPoints, ShowdownError> {
+) -> Result<(StatPoints, Option<Nature>), ShowdownError> {
     let mut points = StatPoints::default();
     let mut parsed = 0;
+    let mut nature_hint = None;
 
     for segment in payload.split('/') {
         let mut parts = segment.split_whitespace();
@@ -148,10 +188,10 @@ fn parse_training_payload(
         if parts.next().is_some() {
             continue;
         }
-        let Ok(value) = raw_value.parse::<u16>() else {
+        let Some(parsed_value) = parse_training_value(raw_value, raw_stat) else {
             continue;
         };
-        let value = max_value.min(value);
+        let value = max_value.min(parsed_value.value);
         let value = convert(value);
         match raw_stat.to_ascii_lowercase().as_str() {
             "hp" => points.hp = value,
@@ -162,6 +202,9 @@ fn parse_training_payload(
             "spe" => points.speed = value,
             _ => continue,
         }
+        if nature_hint.is_none() {
+            nature_hint = parsed_value.nature_hint;
+        }
         parsed += 1;
     }
 
@@ -171,7 +214,50 @@ fn parse_training_payload(
     if points.total() > MAX_TOTAL_STAT_POINTS {
         return Err(ShowdownError::StatPointsOverCap);
     }
-    Ok(points)
+    Ok((points, nature_hint))
+}
+
+fn parse_training_value(raw_value: &str, raw_stat: &str) -> Option<ParsedTrainingValue> {
+    let trimmed = raw_value.trim();
+    let (number, suffix) = trimmed
+        .strip_suffix('+')
+        .map(|value| (value, Some('+')))
+        .or_else(|| trimmed.strip_suffix('-').map(|value| (value, Some('-'))))
+        .unwrap_or((trimmed, None));
+    let value = number.parse::<u16>().ok()?;
+    Some(ParsedTrainingValue {
+        value,
+        nature_hint: suffix.and_then(|suffix| nature_hint_from_suffix(raw_stat, suffix)),
+    })
+}
+
+fn evs_payload_looks_like_champions_points(payload: &str) -> bool {
+    let values = payload
+        .split('/')
+        .filter_map(|segment| {
+            let mut parts = segment.split_whitespace();
+            let raw_value = parts.next()?;
+            let raw_stat = parts.next()?;
+            parse_training_value(raw_value, raw_stat).map(|parsed| parsed.value)
+        })
+        .collect::<Vec<_>>();
+    !values.is_empty() && values.iter().all(|value| *value <= MAX_STAT_POINTS)
+}
+
+fn nature_hint_from_suffix(raw_stat: &str, suffix: char) -> Option<Nature> {
+    match (raw_stat.to_ascii_lowercase().as_str(), suffix) {
+        ("atk", '+') => Some(Nature::Adamant),
+        ("def", '+') => Some(Nature::Bold),
+        ("spa", '+') => Some(Nature::Modest),
+        ("spd", '+') => Some(Nature::Calm),
+        ("spe", '+') => Some(Nature::Timid),
+        ("atk", '-') => Some(Nature::Modest),
+        ("def", '-') => Some(Nature::Mild),
+        ("spa", '-') => Some(Nature::Adamant),
+        ("spd", '-') => Some(Nature::Naughty),
+        ("spe", '-') => Some(Nature::Brave),
+        _ => None,
+    }
 }
 
 fn collect_training_lines(text: &str) -> Vec<TrainingLine<'_>> {
@@ -212,6 +298,42 @@ fn parse_prefixed_line(text: &str, prefix: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn parse_status(text: &str) -> StatusCondition {
+    let Some(status) = parse_prefixed_line(text, "Status:") else {
+        return StatusCondition::Healthy;
+    };
+    match normalize_key(&status).as_str() {
+        "brn" | "burn" | "burned" => StatusCondition::Burned,
+        "par" | "paralyzed" => StatusCondition::Paralyzed,
+        "psn" | "poison" | "poisoned" => StatusCondition::Poisoned,
+        "tox" | "badlypoisoned" => StatusCondition::BadlyPoisoned,
+        "slp" | "asleep" | "sleep" => StatusCondition::Asleep,
+        "drowsy" => StatusCondition::Drowsy,
+        "frz" | "frozen" => StatusCondition::Frozen,
+        _ => StatusCondition::Healthy,
+    }
+}
+
+fn parse_bool_line(text: &str, prefix: &str) -> Option<bool> {
+    parse_prefixed_line(text, prefix).and_then(|value| match normalize_key(&value).as_str() {
+        "true" | "yes" | "on" | "active" | "1" => Some(true),
+        "false" | "no" | "off" | "inactive" | "0" => Some(false),
+        _ => None,
+    })
+}
+
+fn parse_u8_line(text: &str, prefix: &str) -> Option<u8> {
+    parse_prefixed_line(text, prefix)?.parse().ok()
+}
+
+fn parse_rivalry(text: &str) -> Option<RivalryMode> {
+    parse_prefixed_line(text, "Rivalry:").and_then(|value| match normalize_key(&value).as_str() {
+        "same" | "samegender" => Some(RivalryMode::SameGender),
+        "opposite" | "oppositegender" => Some(RivalryMode::OppositeGender),
+        _ => None,
+    })
 }
 
 fn parse_nature(text: &str) -> Result<Option<Nature>, ShowdownError> {
@@ -293,6 +415,14 @@ fn normalize_text(text: &str) -> String {
         .to_owned()
 }
 
+fn normalize_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,6 +443,46 @@ mod tests {
         assert_eq!(parsed.ability.as_deref(), Some("Static"));
         assert_eq!(parsed.nature, Nature::Jolly);
         assert_eq!(parsed.stat_points, StatPoints::new(0, 32, 0, 0, 1, 32));
+    }
+
+    #[test]
+    fn parses_low_evs_as_champions_points() {
+        let parsed = parse_set(
+            "Sneasler @ White Herb\nAbility: Unburden\nEVs: 20 HP / 10 Atk / 21 Def / 15 Spe\nAdamant Nature\n- Close Combat",
+        )
+        .unwrap();
+
+        assert_eq!(parsed.stat_points, StatPoints::new(20, 10, 21, 0, 0, 15));
+        assert_eq!(parsed.nature, Nature::Adamant);
+    }
+
+    #[test]
+    fn parses_damage_calc_nature_suffixes() {
+        let parsed = parse_set("Sneasler\nSPs: 10+ Atk\n- Close Combat").unwrap();
+        assert_eq!(parsed.nature, Nature::Adamant);
+        assert_eq!(parsed.stat_points.attack, 10);
+
+        let explicit = parse_set("Sneasler\nSPs: 10+ Atk\nJolly Nature\n- Close Combat").unwrap();
+        assert_eq!(explicit.nature, Nature::Jolly);
+        assert_eq!(explicit.stat_points.attack, 10);
+    }
+
+    #[test]
+    fn parses_damage_annotations() {
+        let parsed = parse_set(
+            "Kingambit\nStatus: Burned\nAbility On: true\nSupreme Overlord Allies: 3\nTarget: single\n- Kowtow Cleave",
+        )
+        .unwrap();
+
+        assert_eq!(parsed.status, StatusCondition::Burned);
+        assert!(parsed.ability_on);
+        assert_eq!(parsed.supreme_overlord_allies, 3);
+        assert!(parsed.move_targets_single_target);
+
+        let same = parse_set("Luxray\nRivalry: same\n- Wild Charge").unwrap();
+        assert_eq!(same.rivalry, Some(RivalryMode::SameGender));
+        let opposite = parse_set("Luxray\nRivalry: opposite\n- Wild Charge").unwrap();
+        assert_eq!(opposite.rivalry, Some(RivalryMode::OppositeGender));
     }
 
     #[test]

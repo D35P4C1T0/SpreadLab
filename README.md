@@ -6,7 +6,7 @@ SpreadLab is an alpha Pokemon Champions Stat Point optimizer for:
 [Gen 9 Champions] VGC 2026 Reg M-A (Bo3)
 ```
 
-> Alpha status: interfaces, CLI output, WebUI controls, and optimizer reports may
+> Alpha status: interfaces, CLI output, public API structs, and optimizer reports may
 > change while the damage library and Champions rules coverage are still moving.
 > Use results as a practical helper, not as a final rules oracle.
 
@@ -31,10 +31,10 @@ and builds damage inputs. It does not reimplement damage formulas.
 
 - CLI for parsing Showdown sets, checking final Champions stats, running damage
   calcs, and searching offensive/defensive spreads.
-- Optional local WebUI with attacker/defender set editors, field controls, and
-  result tables.
 - Public Rust API for external tools and visualizers.
 - Smogon usage-data fetching/cache helpers for Champions formats.
+- CLI/library-only crate. The embedded alpha WebUI was removed; see
+  `handout.md` for the handoff notes for a future separate WebUI.
 
 ## Quick Start
 
@@ -45,16 +45,14 @@ cargo test
 cargo run -- --help
 ```
 
-Run the local WebUI:
+## Quality Gate
+
+Run this gate before committing changes:
 
 ```sh
-cargo run --features webui -- serve
-```
-
-Then open:
-
-```text
-http://127.0.0.1:8080
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
 ```
 
 ## Local Damage Library Development
@@ -101,33 +99,6 @@ cargo run -- list items
 cargo run -- list abilities
 cargo run -- list moves
 ```
-
-Start the local WebUI:
-
-```sh
-cargo run --features webui -- serve
-```
-
-Then open:
-
-```text
-http://127.0.0.1:8080
-```
-
-## WebUI Field Controls
-
-The WebUI exposes the current battle-field switches that are available through
-`pkmn-dmg-lib-rs`. Supported controls include:
-
-- format: Singles, Doubles
-- terrain: Electric, Grassy, Misty, Psychic
-- weather: Sun, Rain, Sand, Snow
-- Fairy Aura, Gravity, Helping Hand, Tailwind
-- defender-side Protect, Aurora Veil, Reflect, Light Screen, Friend Guard
-
-Controls that are visible but disabled are not supported by the current damage
-library API yet. At the time of writing this includes Stealth Rock, Spikes, Salt
-Cure, and several attacker-side defensive conditions.
 
 Search defensive spreads for one benchmark:
 
@@ -197,9 +168,11 @@ cargo run -- optimize defensive --benchmarks benchmarks.json --full-spend --lock
 
 Implemented first:
 
-- Champions SP and EV parser
-- `EVs:` to `SPs:` conversion with `floor((EV + 4) / 8)`
-- canonical `SPs:` export
+- Champions `SPs:` parser and canonical export
+- Low-value `EVs:` parser for Champions point exports where all values are
+  `<= 32`
+- Legacy `EVs:` to `SPs:` conversion with `floor((EV + 4) / 8)` when any value
+  is greater than `32`
 - stat conversion wrapper around `pkmn-dmg-lib-rs`
 - Champions data resolver from `damage_calc::data::CHAMPIONS_DATA_JSON`
 - pinned Champions species/item/ability lists from `pkmn-dmg-lib-rs`

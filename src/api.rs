@@ -8,7 +8,7 @@ use crate::optimize::{
 };
 use crate::showdown::{parse_set, ShowdownError};
 use crate::spreads::{LockedStats, SpreadSearch};
-use damage_calc::{DamageResult, Field, Format, Nature, SideConditions, Terrain, Weather};
+use damage_calc::{Boosts, DamageResult, Field, Format, Nature, SideConditions, Terrain, Weather};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -102,6 +102,24 @@ pub struct FieldRequest {
     pub defender_aurora_veil: bool,
     #[serde(default)]
     pub defender_friend_guard: bool,
+    #[serde(default)]
+    pub attacker_boosts: BoostsRequest,
+    #[serde(default)]
+    pub defender_boosts: BoostsRequest,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct BoostsRequest {
+    #[serde(default)]
+    pub attack: i8,
+    #[serde(default)]
+    pub defense: i8,
+    #[serde(default)]
+    pub special_attack: i8,
+    #[serde(default)]
+    pub special_defense: i8,
+    #[serde(default)]
+    pub speed: i8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -322,6 +340,8 @@ pub fn find_min_combined_hp_def_survival_with_data(
             benchmark.move_times_affected = hit.move_times_affected;
             if let Some(field) = hit.field {
                 benchmark.fairy_aura = field.fairy_aura;
+                benchmark.attacker_boosts = Some(field.attacker_boosts.into_boosts());
+                benchmark.defender_boosts = Some(field.defender_boosts.into_boosts());
                 benchmark.field = field.into_field();
             }
             Ok(benchmark)
@@ -408,6 +428,8 @@ fn benchmark_from_sets(
     benchmark.move_times_affected = move_times_affected;
     if let Some(field) = field {
         benchmark.fairy_aura = field.fairy_aura;
+        benchmark.attacker_boosts = Some(field.attacker_boosts.into_boosts());
+        benchmark.defender_boosts = Some(field.defender_boosts.into_boosts());
         benchmark.field = field.into_field();
     }
     Ok(benchmark)
@@ -456,6 +478,18 @@ impl FieldRequest {
     }
 }
 
+impl BoostsRequest {
+    pub fn into_boosts(self) -> Boosts {
+        Boosts {
+            attack: self.attack.clamp(-6, 6),
+            defense: self.defense.clamp(-6, 6),
+            special_attack: self.special_attack.clamp(-6, 6),
+            special_defense: self.special_defense.clamp(-6, 6),
+            speed: self.speed.clamp(-6, 6),
+        }
+    }
+}
+
 fn spread_search_from_request(full_spend: bool, locked: LockedStatsRequest) -> SpreadSearch {
     let mut search = if full_spend {
         SpreadSearch::full_spend()
@@ -498,6 +532,7 @@ impl From<DamageResult> for DamageResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     const KINGAMBIT: &str = "Kingambit\nAbility: Defiant\nSPs: 32 Atk\nAdamant Nature\n- Iron Head";
     const FLOETTE: &str = "Mega Floette\n- Protect";
@@ -560,6 +595,400 @@ mod tests {
         .unwrap();
 
         assert!(reflected.summary.max_damage < open.summary.max_damage);
+    }
+
+    #[test]
+    fn calculates_sneasler_close_combat_into_chople_kingambit() {
+        let data = ChampionsData::load().unwrap();
+        let response = calculate_damage_request_with_data(
+            &data,
+            DamageRequest {
+                attacker_set:
+                    "Sneasler @ White Herb\nAbility: Unburden\nSPs: 32 Atk\nAdamant Nature\n- Close Combat"
+                        .to_owned(),
+                defender_set: "Kingambit @ Chople Berry\nSPs: 2 HP / 9 Def\n- Protect".to_owned(),
+                move_name: "Close Combat".to_owned(),
+                move_times_affected: 0,
+                field: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            response.rolls,
+            vec![182, 182, 186, 188, 192, 192, 194, 198, 198, 200, 204, 206, 206, 210, 212, 216]
+        );
+        assert_eq!(response.summary.ko_chance, Some(1.0));
+    }
+
+    #[test]
+    fn calculates_damage_calc_suffixed_sneasler_close_combat() {
+        let data = ChampionsData::load().unwrap();
+        let response = calculate_damage_request_with_data(
+            &data,
+            DamageRequest {
+                attacker_set:
+                    "Sneasler @ White Herb\nAbility: Unburden\nSPs: 10+ Atk\n- Close Combat"
+                        .to_owned(),
+                defender_set: "Kingambit @ Chople Berry\nSPs: 0 HP / 9 Def\n- Protect".to_owned(),
+                move_name: "Close Combat".to_owned(),
+                move_times_affected: 0,
+                field: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            response.rolls,
+            vec![162, 164, 164, 168, 168, 170, 174, 174, 176, 180, 180, 182, 186, 186, 188, 192]
+        );
+        assert_eq!(response.summary.ko_chance, Some(0.5));
+    }
+
+    #[test]
+    fn defensive_min_uses_suffixed_attacker_nature() {
+        let data = ChampionsData::load().unwrap();
+        let response = find_min_hp_def_survival_with_data(
+            &data,
+            HpDefSurvivalRequest {
+                attacker_set:
+                    "Sneasler @ White Herb\nAbility: Unburden\nSPs: 10+ Atk\n- Close Combat"
+                        .to_owned(),
+                defender_set: "Kingambit @ Chople Berry\n- Protect".to_owned(),
+                move_name: "Close Combat".to_owned(),
+                max_ko_chance: 0.125,
+                hp_percent: None,
+                nature: Some(Nature::Adamant),
+                optimize_nature: false,
+                limit: 10,
+                move_times_affected: 0,
+                field: None,
+            },
+        )
+        .unwrap();
+
+        assert!(response
+            .matches
+            .iter()
+            .all(|spread| spread.total_points > 9));
+    }
+
+    #[test]
+    fn defensive_min_uses_showdown_attacker_nature_line() {
+        let data = ChampionsData::load().unwrap();
+        let response = find_min_hp_def_survival_with_data(
+            &data,
+            HpDefSurvivalRequest {
+                attacker_set:
+                    "Sneasler @ White Herb\nAbility: Unburden\nSPs: 10 Atk\nAdamant Nature\n- Close Combat"
+                        .to_owned(),
+                defender_set: "Kingambit @ Chople Berry\n- Protect".to_owned(),
+                move_name: "Close Combat".to_owned(),
+                max_ko_chance: 0.125,
+                hp_percent: None,
+                nature: Some(Nature::Adamant),
+                optimize_nature: false,
+                limit: 10,
+                move_times_affected: 0,
+                field: None,
+            },
+        )
+        .unwrap();
+
+        assert!(response
+            .matches
+            .iter()
+            .all(|spread| spread.total_points > 9));
+    }
+
+    #[test]
+    fn defensive_min_treats_low_evs_as_champions_points() {
+        let data = ChampionsData::load().unwrap();
+        let response = find_min_hp_def_survival_with_data(
+            &data,
+            HpDefSurvivalRequest {
+                attacker_set: "Sneasler @ White Herb\nAbility: Unburden\nLevel: 50\nEVs: 20 HP / 10 Atk / 21 Def / 15 Spe\nAdamant Nature\n- Close Combat\n- Fake Out\n- Dire Claw\n- Protect"
+                    .to_owned(),
+                defender_set: "Kingambit @ Chople Berry\nAbility: Defiant\nSPs: 32 Atk\nAdamant Nature\n- Iron Head\n- Kowtow Cleave"
+                    .to_owned(),
+                move_name: "Close Combat".to_owned(),
+                max_ko_chance: 0.125,
+                hp_percent: None,
+                nature: Some(Nature::Adamant),
+                optimize_nature: false,
+                limit: 10,
+                move_times_affected: 0,
+                field: None,
+            },
+        )
+        .unwrap();
+
+        assert!(response
+            .matches
+            .iter()
+            .all(|spread| spread.total_points > 9));
+    }
+
+    #[test]
+    fn damage_benchmark_matches_known_calcs() {
+        let data = ChampionsData::load().unwrap();
+        let cases = [
+            BenchmarkCase {
+                name: "Sneasler Close Combat vs Chople Kingambit",
+                attacker: "Sneasler @ White Herb\nAbility: Unburden\nSPs: 32+ Atk\n- Close Combat",
+                defender: "Kingambit @ Chople Berry\nSPs: 2 HP / 9 Def\n- Protect",
+                move_name: "Close Combat",
+                field: None,
+                expected_min: 182,
+                expected_max: 216,
+                expected_unique: &[182, 186, 188, 192, 194, 198, 200, 204, 206, 210, 212, 216],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Kingambit Iron Head vs max Mega Floette",
+                attacker:
+                    "Kingambit @ Black Glasses\nAbility: Defiant\nSPs: 32+ Atk\n- Iron Head",
+                defender: "Mega Floette\nSPs: 32 HP / 32 Def\n- Protect",
+                move_name: "Iron Head",
+                field: None,
+                expected_min: 134,
+                expected_max: 158,
+                expected_unique: &[134, 138, 140, 144, 146, 150, 152, 156, 158],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Magnet Transistor Pikachu Thunderbolt in Electric Terrain",
+                attacker: "Pikachu @ Magnet\nAbility: Transistor\n- Thunderbolt",
+                defender: "Milotic\n- Protect",
+                move_name: "Thunderbolt",
+                field: Some(FieldRequest {
+                    terrain: Some(Terrain::Electric),
+                    ..FieldRequest::default()
+                }),
+                expected_min: 102,
+                expected_max: 120,
+                expected_unique: &[102, 104, 108, 110, 114, 116, 120],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Charizard Rock Slide spread in Doubles",
+                attacker: "Charizard\n- Rock Slide",
+                defender: "Volcarona\n- Protect",
+                move_name: "Rock Slide",
+                field: None,
+                expected_min: 104,
+                expected_max: 124,
+                expected_unique: &[104, 108, 112, 116, 120, 124],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Charizard Rock Slide single target in Doubles",
+                attacker: "Charizard\nTarget: single\n- Rock Slide",
+                defender: "Volcarona\n- Protect",
+                move_name: "Rock Slide",
+                field: None,
+                expected_min: 140,
+                expected_max: 168,
+                expected_unique: &[140, 144, 148, 152, 156, 160, 164, 168],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Burned Machamp Drain Punch through Reflect",
+                attacker: "Machamp\nStatus: Burned\n- Drain Punch",
+                defender: "Snorlax\n- Protect",
+                move_name: "Drain Punch",
+                field: Some(FieldRequest {
+                    defender_reflect: true,
+                    ..FieldRequest::default()
+                }),
+                expected_min: 51,
+                expected_max: 60,
+                expected_unique: &[51, 52, 53, 54, 55, 56, 57, 58, 59, 60],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Ninetales Flamethrower in Sun",
+                attacker: "Ninetales\n- Flamethrower",
+                defender: "Scizor\n- Protect",
+                move_name: "Flamethrower",
+                field: Some(FieldRequest {
+                    weather: Some(Weather::Sun),
+                    ..FieldRequest::default()
+                }),
+                expected_min: 304,
+                expected_max: 364,
+                expected_unique: &[304, 312, 316, 324, 328, 336, 340, 348, 352, 360, 364],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Pelipper Weather Ball in Rain",
+                attacker: "Pelipper\n- Weather Ball",
+                defender: "Camerupt\n- Protect",
+                move_name: "Weather Ball",
+                field: Some(FieldRequest {
+                    weather: Some(Weather::Rain),
+                    ..FieldRequest::default()
+                }),
+                expected_min: 412,
+                expected_max: 492,
+                expected_unique: &[
+                    412, 420, 424, 432, 436, 444, 448, 456, 460, 468, 472, 480, 484, 492,
+                ],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Abomasnow Blizzard into active Multiscale Dragonite",
+                attacker: "Abomasnow\n- Blizzard",
+                defender: "Dragonite\nAbility: Multiscale\nAbility On: true\n- Protect",
+                move_name: "Blizzard",
+                field: None,
+                expected_min: 86,
+                expected_max: 104,
+                expected_unique: &[86, 90, 92, 96, 98, 102, 104],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Gyarados Waterfall into Passho Torkoal",
+                attacker: "Gyarados\n- Waterfall",
+                defender: "Torkoal @ Passho Berry\n- Protect",
+                move_name: "Waterfall",
+                field: None,
+                expected_min: 42,
+                expected_max: 49,
+                expected_unique: &[42, 43, 45, 46, 48, 49],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Gengar Shadow Ball into Kasib Clefable",
+                attacker: "Gengar\n- Shadow Ball",
+                defender: "Clefable @ Kasib Berry\n- Protect",
+                move_name: "Shadow Ball",
+                field: None,
+                expected_min: 63,
+                expected_max: 75,
+                expected_unique: &[63, 64, 66, 67, 69, 70, 72, 73, 75],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Mega Kangaskhan Parental Bond Double-Edge",
+                attacker: "Mega Kangaskhan\nAbility: Parental Bond\n- Double-Edge",
+                defender: "Blastoise\n- Protect",
+                move_name: "Double-Edge",
+                field: None,
+                expected_min: 123,
+                expected_max: 145,
+                expected_unique: &[
+                    123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136,
+                    137, 138, 139, 140, 141, 142, 143, 144, 145,
+                ],
+                expected_roll_count: Some(256),
+            },
+            BenchmarkCase {
+                name: "Skill Link Toucannon Bullet Seed",
+                attacker: "Toucannon\nAbility: Skill Link\n- Bullet Seed",
+                defender: "Slowbro\n- Protect",
+                move_name: "Bullet Seed",
+                field: None,
+                expected_min: 110,
+                expected_max: 130,
+                expected_unique: &[110, 112, 114, 116, 118, 120, 122, 124, 126, 128, 130],
+                expected_roll_count: Some(1_048_576),
+            },
+            BenchmarkCase {
+                name: "Swift Swim Beartic Electro Ball in Rain",
+                attacker: "Beartic\nAbility: Swift Swim\n- Electro Ball",
+                defender: "Pelipper\n- Protect",
+                move_name: "Electro Ball",
+                field: Some(FieldRequest {
+                    weather: Some(Weather::Rain),
+                    ..FieldRequest::default()
+                }),
+                expected_min: 92,
+                expected_max: 112,
+                expected_unique: &[92, 96, 100, 104, 108, 112],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Analytic Starmie Psychic moving last",
+                attacker: "Starmie\nAbility: Analytic\n- Psychic",
+                defender: "Venusaur\n- Protect",
+                move_name: "Psychic",
+                field: Some(FieldRequest {
+                    defender_tailwind: true,
+                    ..FieldRequest::default()
+                }),
+                expected_min: 134,
+                expected_max: 158,
+                expected_unique: &[134, 138, 140, 144, 146, 150, 152, 156, 158],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Rivalry Luxray same gender",
+                attacker: "Luxray\nAbility: Rivalry\nRivalry: same\n- Wild Charge",
+                defender: "Pelipper\n- Protect",
+                move_name: "Wild Charge",
+                field: None,
+                expected_min: 300,
+                expected_max: 352,
+                expected_unique: &[300, 304, 312, 316, 324, 328, 336, 340, 348, 352],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Rivalry Luxray opposite gender",
+                attacker: "Luxray\nAbility: Rivalry\nRivalry: opposite\n- Wild Charge",
+                defender: "Pelipper\n- Protect",
+                move_name: "Wild Charge",
+                field: None,
+                expected_min: 180,
+                expected_max: 216,
+                expected_unique: &[180, 184, 192, 196, 204, 208, 216],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Fairy Aura Mega Floette Moonblast",
+                attacker: "Mega Floette\nAbility: Fairy Aura\n- Moonblast",
+                defender: "Hydreigon\n- Protect",
+                move_name: "Moonblast",
+                field: None,
+                expected_min: 456,
+                expected_max: 540,
+                expected_unique: &[
+                    456, 460, 468, 472, 480, 484, 492, 496, 504, 508, 516, 520, 528, 532,
+                    540,
+                ],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Sharpness Gallade Psycho Cut",
+                attacker: "Gallade\nAbility: Sharpness\n- Psycho Cut",
+                defender: "Toxapex\n- Protect",
+                move_name: "Psycho Cut",
+                field: None,
+                expected_min: 102,
+                expected_max: 120,
+                expected_unique: &[102, 104, 108, 110, 114, 116, 120],
+                expected_roll_count: None,
+            },
+            BenchmarkCase {
+                name: "Supreme Overlord Kingambit with 3 fainted allies",
+                attacker:
+                    "Kingambit\nAbility: Supreme Overlord\nSupreme Overlord Allies: 3\n- Kowtow Cleave",
+                defender: "Gengar\n- Protect",
+                move_name: "Kowtow Cleave",
+                field: None,
+                expected_min: 242,
+                expected_max: 288,
+                expected_unique: &[
+                    242, 246, 248, 252, 254, 258, 260, 264, 266, 270, 272, 276, 278, 282,
+                    284, 288,
+                ],
+                expected_roll_count: None,
+            },
+        ];
+
+        for case in cases {
+            assert_benchmark_case(&data, case);
+        }
     }
 
     #[test]
@@ -676,5 +1105,58 @@ mod tests {
             .matches
             .iter()
             .all(|spread| matches!(spread.nature, Nature::Adamant | Nature::Hardy)));
+    }
+
+    #[derive(Clone, Copy)]
+    struct BenchmarkCase {
+        name: &'static str,
+        attacker: &'static str,
+        defender: &'static str,
+        move_name: &'static str,
+        field: Option<FieldRequest>,
+        expected_min: u16,
+        expected_max: u16,
+        expected_unique: &'static [u16],
+        expected_roll_count: Option<usize>,
+    }
+
+    fn assert_benchmark_case(data: &ChampionsData, case: BenchmarkCase) {
+        let response = calculate_damage_request_with_data(
+            data,
+            DamageRequest {
+                attacker_set: case.attacker.to_owned(),
+                defender_set: case.defender.to_owned(),
+                move_name: case.move_name.to_owned(),
+                move_times_affected: 0,
+                field: case.field,
+            },
+        )
+        .unwrap_or_else(|error| panic!("{} failed: {error}", case.name));
+        assert_eq!(
+            response.summary.min_damage, case.expected_min,
+            "{} min damage",
+            case.name
+        );
+        assert_eq!(
+            response.summary.max_damage, case.expected_max,
+            "{} max damage",
+            case.name
+        );
+        let unique = response
+            .rolls
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(unique, case.expected_unique, "{} unique rolls", case.name);
+        if let Some(expected_roll_count) = case.expected_roll_count {
+            assert_eq!(
+                response.rolls.len(),
+                expected_roll_count,
+                "{} roll count",
+                case.name
+            );
+        }
     }
 }

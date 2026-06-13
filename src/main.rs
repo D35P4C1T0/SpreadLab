@@ -153,14 +153,6 @@ enum Command {
         #[arg(value_enum)]
         kind: ListKind,
     },
-    /// Start the browser WebUI.
-    #[cfg(feature = "webui")]
-    Serve {
-        #[arg(long, default_value = "127.0.0.1")]
-        host: String,
-        #[arg(long, default_value_t = 8080)]
-        port: u16,
-    },
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -456,10 +448,6 @@ fn main() -> Result<()> {
             for name in names {
                 println!("{name}");
             }
-        }
-        #[cfg(feature = "webui")]
-        Command::Serve { host, port } => {
-            spreadlab_rs::web::run_blocking(spreadlab_rs::web::ServeConfig { host, port })?;
         }
     }
     Ok(())

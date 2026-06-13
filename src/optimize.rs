@@ -5,6 +5,7 @@ use crate::spreads::{generate_spreads, SpreadSearch};
 use crate::stats::{champions_final_stats, FinalStats, StatPoints};
 use damage_calc::{DamageResult, Nature};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -264,19 +265,25 @@ pub fn hp_def_combined_survival_search(
                 let sps = StatPoints::new(hp, 0, defense, 0, 0, 0);
                 let final_stats = champions_final_stats(species.base_stats(), *nature, sps)?;
                 let starting_hp = current_hp_from_percent(final_stats.hp, hp_percent);
-                let mut hit_rolls = Vec::with_capacity(benchmarks.len());
                 let mut hits = Vec::with_capacity(benchmarks.len());
 
                 for benchmark in benchmarks {
                     let mut candidate = benchmark.clone();
                     candidate.defender.nature = *nature;
                     candidate.defender.stat_points = sps;
+                    candidate.defender_current_hp = Some(starting_hp);
                     let result = calculate_benchmark(data, &candidate)?;
-                    hit_rolls.push(result.damage_rolls.clone());
                     hits.push(DamageSummary::from(result));
                 }
 
-                let combined = combined_damage_summary(&hit_rolls, final_stats.hp, starting_hp);
+                let combined = sequence_damage_summary(
+                    data,
+                    benchmarks,
+                    *nature,
+                    sps,
+                    final_stats.hp,
+                    starting_hp,
+                )?;
                 let spread = CombinedSurvivalSpread {
                     rank: 0,
                     nature: *nature,
@@ -627,72 +634,118 @@ fn ko_chance_from_rolls(rolls: &[u16], starting_hp: u16) -> f32 {
     ko_rolls as f32 / rolls.len() as f32
 }
 
-fn combined_damage_summary(
-    hit_rolls: &[Vec<u16>],
+fn sequence_damage_summary(
+    data: &ChampionsData,
+    benchmarks: &[DamageBenchmark],
+    nature: Nature,
+    sps: StatPoints,
     max_hp: u16,
     starting_hp: u16,
-) -> CombinedDamageSummary {
-    let mut total_rolls = 0usize;
-    let mut ko_rolls = 0usize;
+) -> Result<CombinedDamageSummary, OptimizeError> {
+    let mut total_probability = 0.0;
+    let mut ko_probability = 0.0;
     let mut min_damage = u16::MAX;
     let mut max_damage = 0u16;
-    count_combined_rolls(
-        hit_rolls,
-        0,
+    let mut cache = HashMap::new();
+    count_sequence_rolls(
+        data,
+        benchmarks,
+        nature,
+        sps,
+        &mut cache,
         0,
         starting_hp,
-        &mut total_rolls,
-        &mut ko_rolls,
+        0,
+        1.0,
+        &mut total_probability,
+        &mut ko_probability,
         &mut min_damage,
         &mut max_damage,
-    );
+    )?;
     if min_damage == u16::MAX {
         min_damage = 0;
     }
-    CombinedDamageSummary {
+    Ok(CombinedDamageSummary {
         min_damage,
         max_damage,
         percent_min: min_damage as f32 * 100.0 / max_hp as f32,
         percent_max: max_damage as f32 * 100.0 / max_hp as f32,
-        ko_chance: if total_rolls == 0 {
+        ko_chance: if total_probability == 0.0 {
             0.0
         } else {
-            ko_rolls as f32 / total_rolls as f32
+            (ko_probability / total_probability) as f32
         },
         starting_hp,
-    }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn count_combined_rolls(
-    hit_rolls: &[Vec<u16>],
+fn count_sequence_rolls(
+    data: &ChampionsData,
+    benchmarks: &[DamageBenchmark],
+    nature: Nature,
+    sps: StatPoints,
+    cache: &mut HashMap<(usize, u16), Vec<u16>>,
     index: usize,
+    current_hp: u16,
     running_damage: u16,
-    starting_hp: u16,
-    total_rolls: &mut usize,
-    ko_rolls: &mut usize,
+    probability: f64,
+    total_probability: &mut f64,
+    ko_probability: &mut f64,
     min_damage: &mut u16,
     max_damage: &mut u16,
-) {
-    if index == hit_rolls.len() {
-        *total_rolls += 1;
-        if running_damage >= starting_hp {
-            *ko_rolls += 1;
-        }
+) -> Result<(), OptimizeError> {
+    if index == benchmarks.len() {
+        *total_probability += probability;
         *min_damage = (*min_damage).min(running_damage);
         *max_damage = (*max_damage).max(running_damage);
-        return;
+        return Ok(());
     }
-    for damage in &hit_rolls[index] {
-        count_combined_rolls(
-            hit_rolls,
+
+    let rolls = if let Some(rolls) = cache.get(&(index, current_hp)).cloned() {
+        rolls
+    } else {
+        let mut candidate = benchmarks[index].clone();
+        candidate.defender.nature = nature;
+        candidate.defender.stat_points = sps;
+        candidate.defender_current_hp = Some(current_hp);
+        let result = calculate_benchmark(data, &candidate)?;
+        cache.insert((index, current_hp), result.damage_rolls.clone());
+        result.damage_rolls
+    };
+
+    if rolls.is_empty() {
+        *total_probability += probability;
+        *min_damage = (*min_damage).min(running_damage);
+        *max_damage = (*max_damage).max(running_damage);
+        return Ok(());
+    }
+
+    let roll_probability = probability / rolls.len() as f64;
+    for damage in rolls {
+        let next_damage = running_damage.saturating_add(damage);
+        if damage >= current_hp {
+            *total_probability += roll_probability;
+            *ko_probability += roll_probability;
+            *min_damage = (*min_damage).min(next_damage);
+            *max_damage = (*max_damage).max(next_damage);
+            continue;
+        }
+        count_sequence_rolls(
+            data,
+            benchmarks,
+            nature,
+            sps,
+            cache,
             index + 1,
-            running_damage.saturating_add(*damage),
-            starting_hp,
-            total_rolls,
-            ko_rolls,
+            current_hp - damage,
+            next_damage,
+            roll_probability,
+            total_probability,
+            ko_probability,
             min_damage,
             max_damage,
-        );
+        )?;
     }
+    Ok(())
 }

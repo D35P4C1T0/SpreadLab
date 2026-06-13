@@ -288,6 +288,7 @@ pub fn parse_ability(raw: &str) -> Result<Ability, DataError> {
         "innerfocus" => Ability::InnerFocus,
         "intimidate" => Ability::Intimidate,
         "intrepidsword" => Ability::IntrepidSword,
+        "unburden" => Ability::Unburden,
         "ironfist" => Ability::IronFist,
         "klutz" => Ability::Klutz,
         "leafguard" => Ability::LeafGuard,
@@ -331,6 +332,7 @@ pub fn parse_ability(raw: &str) -> Result<Ability, DataError> {
         "reckless" => Ability::Reckless,
         "refrigerate" => Ability::Refrigerate,
         "ripen" => Ability::Ripen,
+        "rivalry" => Ability::Rivalry,
         "rockypayload" => Ability::RockyPayload,
         "sandforce" => Ability::SandForce,
         "sandspit" => Ability::SandSpit,
@@ -338,6 +340,7 @@ pub fn parse_ability(raw: &str) -> Result<Ability, DataError> {
         "scrappy" => Ability::Scrappy,
         "sharpness" => Ability::Sharpness,
         "shadowshield" => Ability::ShadowShield,
+        "skilllink" => Ability::SkillLink,
         "sheerforce" => Ability::SheerForce,
         "simple" => Ability::Simple,
         "sniper" => Ability::Sniper,
@@ -355,6 +358,7 @@ pub fn parse_ability(raw: &str) -> Result<Ability, DataError> {
         "supersweetsyrup" => Ability::SupersweetSyrup,
         "supremeoverlord" => Ability::SupremeOverlord,
         "swarm" => Ability::Swarm,
+        "swiftswim" => Ability::SwiftSwim,
         "swordofruin" => Ability::SwordOfRuin,
         "tabletsofruin" => Ability::TabletsOfRuin,
         "technician" => Ability::Technician,
@@ -513,6 +517,7 @@ pub fn parse_item(raw: &str) -> Result<Item, DataError> {
         "fightingmemory" => Item::FightingMemory,
         "firememory" => Item::FireMemory,
         "flyingmemory" => Item::FlyingMemory,
+        "whiteherb" => Item::None,
         "ghostmemory" => Item::GhostMemory,
         "grassmemory" => Item::GrassMemory,
         "groundmemory" => Item::GroundMemory,
@@ -672,8 +677,13 @@ mod tests {
         assert_eq!(parse_ability("solarpower").unwrap(), Ability::SolarPower);
         assert_eq!(parse_ability("Fairy Aura").unwrap(), Ability::FairyAura);
         assert_eq!(parse_ability("Flower Veil").unwrap(), Ability::FlowerVeil);
+        assert_eq!(parse_ability("Unburden").unwrap(), Ability::Unburden);
+        assert_eq!(parse_ability("Rivalry").unwrap(), Ability::Rivalry);
+        assert_eq!(parse_ability("Skill Link").unwrap(), Ability::SkillLink);
+        assert_eq!(parse_ability("Swift Swim").unwrap(), Ability::SwiftSwim);
         assert_eq!(parse_item("Choice Scarf").unwrap(), Item::ChoiceScarf);
         assert_eq!(parse_item("choicescarf").unwrap(), Item::ChoiceScarf);
+        assert_eq!(parse_item("White Herb").unwrap(), Item::None);
         assert_eq!(parse_item("nothing").unwrap(), Item::None);
     }
 }
