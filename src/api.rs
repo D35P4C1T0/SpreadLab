@@ -31,6 +31,8 @@ pub struct DamageRequest {
     pub move_name: String,
     pub move_times_affected: u8,
     #[serde(default)]
+    pub critical: bool,
+    #[serde(default)]
     pub field: Option<FieldRequest>,
 }
 
@@ -55,6 +57,8 @@ pub struct OptimizeBenchmarkRequest {
     pub defender_set: String,
     pub move_name: String,
     pub move_times_affected: u8,
+    #[serde(default)]
+    pub critical: bool,
     #[serde(default)]
     pub field: Option<FieldRequest>,
 }
@@ -134,6 +138,8 @@ pub struct HpDefSurvivalRequest {
     pub limit: usize,
     pub move_times_affected: u8,
     #[serde(default)]
+    pub critical: bool,
+    #[serde(default)]
     pub field: Option<FieldRequest>,
 }
 
@@ -142,6 +148,8 @@ pub struct IncomingHitRequest {
     pub attacker_set: String,
     pub move_name: String,
     pub move_times_affected: u8,
+    #[serde(default)]
+    pub critical: bool,
     #[serde(default)]
     pub field: Option<FieldRequest>,
 }
@@ -167,6 +175,8 @@ pub struct OffensiveKoRequest {
     pub optimize_nature: bool,
     pub limit: usize,
     pub move_times_affected: u8,
+    #[serde(default)]
+    pub critical: bool,
     #[serde(default)]
     pub field: Option<FieldRequest>,
 }
@@ -232,6 +242,7 @@ pub fn calculate_damage_request_with_data(
         &request.defender_set,
         request.move_name,
         request.move_times_affected,
+        request.critical,
         request.field,
     )?;
     let result = calculate_benchmark(data, &benchmark)?;
@@ -255,6 +266,7 @@ pub fn find_min_hp_def_survival_with_data(
         &request.defender_set,
         request.move_name,
         request.move_times_affected,
+        request.critical,
         request.field,
     )?;
     let owned_natures;
@@ -338,6 +350,7 @@ pub fn find_min_combined_hp_def_survival_with_data(
                 hit.move_name,
             );
             benchmark.move_times_affected = hit.move_times_affected;
+            benchmark.critical = hit.critical;
             if let Some(field) = hit.field {
                 benchmark.fairy_aura = field.fairy_aura;
                 benchmark.attacker_boosts = Some(field.attacker_boosts.into_boosts());
@@ -392,6 +405,7 @@ pub fn find_min_offensive_ko_with_data(
         &request.defender_set,
         request.move_name,
         request.move_times_affected,
+        request.critical,
         request.field,
     )?;
     let owned_natures;
@@ -418,6 +432,7 @@ fn benchmark_from_sets(
     defender_set: &str,
     move_name: String,
     move_times_affected: u8,
+    critical: bool,
     field: Option<FieldRequest>,
 ) -> Result<DamageBenchmark, ApiError> {
     let mut benchmark = DamageBenchmark::new(
@@ -426,6 +441,7 @@ fn benchmark_from_sets(
         move_name,
     );
     benchmark.move_times_affected = move_times_affected;
+    benchmark.critical = critical;
     if let Some(field) = field {
         benchmark.fairy_aura = field.fairy_aura;
         benchmark.attacker_boosts = Some(field.attacker_boosts.into_boosts());
@@ -446,6 +462,7 @@ fn optimize_benchmarks_from_request(
                 &benchmark.defender_set,
                 benchmark.move_name,
                 benchmark.move_times_affected,
+                benchmark.critical,
                 benchmark.field,
             )
         })
@@ -552,6 +569,7 @@ mod tests {
                 optimize_nature: false,
                 limit: 4,
                 move_times_affected: 0,
+                critical: false,
                 field: None,
             },
         )
@@ -575,6 +593,7 @@ mod tests {
                 defender_set: FLOETTE.to_owned(),
                 move_name: "Iron Head".to_owned(),
                 move_times_affected: 0,
+                critical: false,
                 field: None,
             },
         )
@@ -586,6 +605,7 @@ mod tests {
                 defender_set: FLOETTE.to_owned(),
                 move_name: "Iron Head".to_owned(),
                 move_times_affected: 0,
+                critical: false,
                 field: Some(FieldRequest {
                     defender_reflect: true,
                     ..FieldRequest::default()
@@ -595,6 +615,27 @@ mod tests {
         .unwrap();
 
         assert!(reflected.summary.max_damage < open.summary.max_damage);
+    }
+
+    #[test]
+    fn critical_flag_applies_critical_damage() {
+        let data = ChampionsData::load().unwrap();
+        let attacker = parse_set("Aerodactyl\nSPs: 32 Atk\n- Dual Wingbeat").unwrap();
+        let defender = parse_set("Sneasler\nSPs: 0 HP / 21 Def\n- Protect").unwrap();
+        let normal = calculate_benchmark(
+            &data,
+            &DamageBenchmark::new(attacker.clone(), defender.clone(), "Dual Wingbeat"),
+        )
+        .unwrap();
+        let mut critical_benchmark = DamageBenchmark::new(attacker, defender, "Dual Wingbeat");
+        critical_benchmark.critical = true;
+        let critical = calculate_benchmark(&data, &critical_benchmark).unwrap();
+
+        assert!(critical.max_damage > normal.max_damage);
+        assert!(critical
+            .applied_modifiers
+            .iter()
+            .any(|modifier| modifier.label == "critical"));
     }
 
     #[test]
@@ -609,6 +650,7 @@ mod tests {
                 defender_set: "Kingambit @ Chople Berry\nSPs: 2 HP / 9 Def\n- Protect".to_owned(),
                 move_name: "Close Combat".to_owned(),
                 move_times_affected: 0,
+                critical: false,
                 field: None,
             },
         )
@@ -658,6 +700,7 @@ mod tests {
                 defender_set: "Kingambit @ Chople Berry\nSPs: 0 HP / 9 Def\n- Protect".to_owned(),
                 move_name: "Close Combat".to_owned(),
                 move_times_affected: 0,
+                critical: false,
                 field: None,
             },
         )
@@ -687,6 +730,7 @@ mod tests {
                 optimize_nature: false,
                 limit: 10,
                 move_times_affected: 0,
+                critical: false,
                 field: None,
             },
         )
@@ -715,6 +759,7 @@ mod tests {
                 optimize_nature: false,
                 limit: 10,
                 move_times_affected: 0,
+                critical: false,
                 field: None,
             },
         )
@@ -743,6 +788,7 @@ mod tests {
                 optimize_nature: false,
                 limit: 10,
                 move_times_affected: 0,
+                critical: false,
                 field: None,
             },
         )
@@ -1031,6 +1077,7 @@ mod tests {
                 optimize_nature: false,
                 limit: 1,
                 move_times_affected: 0,
+                critical: false,
                 field: None,
             },
         )
@@ -1055,12 +1102,14 @@ mod tests {
                         attacker_set: KINGAMBIT.to_owned(),
                         move_name: "Iron Head".to_owned(),
                         move_times_affected: 0,
+                        critical: false,
                         field: None,
                     },
                     IncomingHitRequest {
                         attacker_set: KINGAMBIT.to_owned(),
                         move_name: "Iron Head".to_owned(),
                         move_times_affected: 0,
+                        critical: false,
                         field: None,
                     },
                 ],
@@ -1097,6 +1146,7 @@ mod tests {
                 optimize_nature: false,
                 limit: 1,
                 move_times_affected: 1,
+                critical: false,
                 field: None,
             },
         )
@@ -1121,6 +1171,7 @@ mod tests {
                 optimize_nature: true,
                 limit: 10,
                 move_times_affected: 1,
+                critical: false,
                 field: None,
             },
         )
@@ -1153,6 +1204,7 @@ mod tests {
                 defender_set: case.defender.to_owned(),
                 move_name: case.move_name.to_owned(),
                 move_times_affected: 0,
+                critical: false,
                 field: case.field,
             },
         )

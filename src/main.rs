@@ -45,6 +45,8 @@ enum Command {
         move_name: String,
         #[arg(long, default_value_t = 0)]
         move_times_affected: u8,
+        #[arg(long = "crit")]
+        critical: bool,
         #[arg(long)]
         json: bool,
     },
@@ -73,6 +75,8 @@ enum Command {
         show_closest_miss: bool,
         #[arg(long, default_value_t = 0)]
         move_times_affected: u8,
+        #[arg(long = "crit")]
+        critical: bool,
         #[arg(long, default_value_t = 10)]
         limit: usize,
         #[arg(long)]
@@ -102,8 +106,12 @@ enum Command {
         show_closest_miss: bool,
         #[arg(long, default_value_t = 0)]
         move_times_affected1: u8,
+        #[arg(long = "crit1")]
+        critical1: bool,
         #[arg(long, default_value_t = 0)]
         move_times_affected2: u8,
+        #[arg(long = "crit2")]
+        critical2: bool,
         #[arg(long, default_value_t = 10)]
         limit: usize,
         #[arg(long)]
@@ -127,6 +135,8 @@ enum Command {
         show_closest_miss: bool,
         #[arg(long, default_value_t = 0)]
         move_times_affected: u8,
+        #[arg(long = "crit")]
+        critical: bool,
         #[arg(long, default_value_t = 10)]
         limit: usize,
         #[arg(long)]
@@ -166,6 +176,8 @@ struct OptimizeArgs {
     defender: Option<PathBuf>,
     #[arg(long = "move")]
     move_name: Option<String>,
+    #[arg(long = "crit")]
+    critical: bool,
     #[arg(long)]
     full_spend: bool,
     #[arg(long)]
@@ -197,6 +209,8 @@ struct BenchmarkEntry {
     defender: String,
     #[serde(rename = "move")]
     move_name: String,
+    #[serde(default)]
+    critical: bool,
 }
 
 fn main() -> Result<()> {
@@ -230,6 +244,7 @@ fn main() -> Result<()> {
             defender,
             move_name,
             move_times_affected,
+            critical,
             json,
         } => {
             let data = ChampionsData::load()?;
@@ -237,6 +252,7 @@ fn main() -> Result<()> {
             let defender = parse_file(&defender)?;
             let mut benchmark = DamageBenchmark::new(attacker, defender, move_name);
             benchmark.move_times_affected = move_times_affected;
+            benchmark.critical = critical;
             let result = calculate_benchmark(&data, &benchmark)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
@@ -266,6 +282,7 @@ fn main() -> Result<()> {
             optimize_nature,
             show_closest_miss,
             move_times_affected,
+            critical,
             limit,
             json,
         } => {
@@ -273,6 +290,7 @@ fn main() -> Result<()> {
             let mut benchmark =
                 DamageBenchmark::new(parse_file(&attacker)?, parse_file(&defender)?, move_name);
             benchmark.move_times_affected = move_times_affected;
+            benchmark.critical = critical;
             let natures = match nature {
                 Some(raw) => vec![parse_nature_name(&raw).context("unknown nature")?],
                 None if optimize_nature => optimized_defensive_natures(&data, &benchmark)?.to_vec(),
@@ -311,7 +329,9 @@ fn main() -> Result<()> {
             optimize_nature,
             show_closest_miss,
             move_times_affected1,
+            critical1,
             move_times_affected2,
+            critical2,
             limit,
             json,
         } => {
@@ -320,8 +340,10 @@ fn main() -> Result<()> {
             let mut first =
                 DamageBenchmark::new(parse_file(&attacker1)?, defender.clone(), move_name1);
             first.move_times_affected = move_times_affected1;
+            first.critical = critical1;
             let mut second = DamageBenchmark::new(parse_file(&attacker2)?, defender, move_name2);
             second.move_times_affected = move_times_affected2;
+            second.critical = critical2;
             let benchmarks = vec![first, second];
             let natures = match nature {
                 Some(raw) => vec![parse_nature_name(&raw).context("unknown nature")?],
@@ -360,6 +382,7 @@ fn main() -> Result<()> {
             optimize_nature,
             show_closest_miss,
             move_times_affected,
+            critical,
             limit,
             json,
         } => {
@@ -367,6 +390,7 @@ fn main() -> Result<()> {
             let mut benchmark =
                 DamageBenchmark::new(parse_file(&attacker)?, parse_file(&defender)?, move_name);
             benchmark.move_times_affected = move_times_affected;
+            benchmark.critical = critical;
             let natures = match nature {
                 Some(raw) => vec![parse_nature_name(&raw).context("unknown nature")?],
                 None if optimize_nature => optimized_offensive_natures(&data, &benchmark)?.to_vec(),
@@ -593,7 +617,9 @@ fn load_optimize_benchmarks(args: &OptimizeArgs) -> Result<Vec<DamageBenchmark>>
             .map(|entry| {
                 let attacker = parse_set(&entry.attacker).context("parse benchmark attacker")?;
                 let defender = parse_set(&entry.defender).context("parse benchmark defender")?;
-                Ok(DamageBenchmark::new(attacker, defender, entry.move_name))
+                let mut benchmark = DamageBenchmark::new(attacker, defender, entry.move_name);
+                benchmark.critical = entry.critical;
+                Ok(benchmark)
             })
             .collect();
     }
@@ -610,11 +636,13 @@ fn load_optimize_benchmarks(args: &OptimizeArgs) -> Result<Vec<DamageBenchmark>>
         .move_name
         .as_ref()
         .context("--move is required unless --benchmarks is used")?;
-    Ok(vec![DamageBenchmark::new(
+    let mut benchmark = DamageBenchmark::new(
         parse_file(attacker)?,
         parse_file(defender)?,
         move_name.clone(),
-    )])
+    );
+    benchmark.critical = args.critical;
+    Ok(vec![benchmark])
 }
 
 fn print_ranked(ranked: &[RankedSpread]) {

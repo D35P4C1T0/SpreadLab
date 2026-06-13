@@ -98,6 +98,13 @@ Run one damage calculation:
 cargo run -- calc --attacker attacker.txt --defender defender.txt --move "Flamethrower"
 ```
 
+Force a critical hit for damage, survival, KO, or one-off optimization benchmarks:
+
+```sh
+cargo run -- calc --attacker attacker.txt --defender defender.txt --move "Flamethrower" --crit
+cargo run -- survive --attacker attacker.txt --defender defender.txt --move "Iron Head" --crit
+```
+
 Print pinned Champions names from the damage library:
 
 ```sh
@@ -166,7 +173,8 @@ cargo run -- optimize defensive --benchmarks benchmarks.json --full-spend --lock
     {
       "attacker": "Charizard-Mega-Y @ Charizardite Y\nAbility: Solar Power\nSPs: 2 HP / 32 SpA / 32 Spe\nTimid Nature\n- Flamethrower",
       "defender": "Venusaur @ Sitrus Berry\nAbility: Overgrow\nSPs: 32 HP / 32 SpD / 2 Spe\nCalm Nature\n- Protect",
-      "move": "Flamethrower"
+      "move": "Flamethrower",
+      "critical": false
     }
   ]
 }

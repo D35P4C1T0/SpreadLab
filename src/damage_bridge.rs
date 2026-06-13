@@ -19,6 +19,7 @@ pub struct DamageBenchmark {
     pub defender: ParsedSet,
     pub move_name: String,
     pub move_times_affected: u8,
+    pub critical: bool,
     pub field: Field,
     pub fairy_aura: bool,
     pub attacker_boosts: Option<Boosts>,
@@ -37,6 +38,7 @@ impl DamageBenchmark {
             defender,
             move_name: move_name.into(),
             move_times_affected: 0,
+            critical: false,
             field,
             fairy_aura: false,
             attacker_boosts: None,
@@ -54,6 +56,7 @@ pub fn calculate_benchmark(
     let mut defender = build_pokemon(data, &benchmark.defender)?;
     let mut move_ = data.move_data(&benchmark.move_name)?.to_damage_move()?;
     move_.times_affected = benchmark.move_times_affected;
+    move_.is_critical = benchmark.critical;
     move_.targets_single_target =
         move_.targets_single_target || benchmark.attacker.move_targets_single_target;
     if let Some(hits) = fixed_hit_count(&move_.name) {
