@@ -10,9 +10,6 @@ use spreadlab_rs::optimize::{
     CombinedSurvivalSpread, KoSpread, RankedSpread, SurvivalSpread,
 };
 use spreadlab_rs::showdown::{build_champions_sp_line, parse_nature_name, parse_set};
-use spreadlab_rs::smogon::{
-    default_cache_dir, fetch_latest, fetch_month, DEFAULT_FORMAT, DEFAULT_RATING,
-};
 use spreadlab_rs::spreads::{LockedStats, SpreadSearch};
 use spreadlab_rs::stats::champions_final_stats;
 use std::fs;
@@ -28,19 +25,6 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Fetch and cache Smogon monthly chaos stats.
-    Fetch {
-        #[arg(long, default_value = "latest")]
-        month: String,
-        #[arg(long, default_value = DEFAULT_FORMAT)]
-        format: String,
-        #[arg(long, default_value_t = DEFAULT_RATING)]
-        rating: u16,
-        #[arg(long)]
-        cache_dir: Option<PathBuf>,
-        #[arg(long)]
-        json: bool,
-    },
     /// Parse a Showdown set and print canonical Champions SPs.
     Parse {
         #[arg(value_name = "SET_FILE")]
@@ -218,35 +202,6 @@ struct BenchmarkEntry {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Fetch {
-            month,
-            format,
-            rating,
-            cache_dir,
-            json,
-        } => {
-            let cache_dir = cache_dir.or_else(default_cache_dir);
-            let stats = if month == "latest" {
-                fetch_latest(&format, rating, cache_dir.as_deref())?
-            } else {
-                fetch_month(&month, &format, rating, cache_dir.as_deref())?
-            };
-            if json {
-                println!("{}", serde_json::to_string_pretty(&stats)?);
-            } else {
-                println!(
-                    "{} {} rating {}: {} battles, {} Pokemon",
-                    stats.format_id,
-                    stats.month,
-                    stats.rating,
-                    stats.battles,
-                    stats.pokemon.len()
-                );
-                if let Some(cache_dir) = cache_dir {
-                    println!("cache: {}", cache_dir.display());
-                }
-            }
-        }
         Command::Parse { set_file } => {
             let set = parse_file(&set_file)?;
             println!("species: {}", set.species);

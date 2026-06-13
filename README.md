@@ -10,12 +10,6 @@ SpreadLab is an alpha Pokemon Champions Stat Point optimizer for:
 > change while the damage library and Champions rules coverage are still moving.
 > Use results as a practical helper, not as a final rules oracle.
 
-Showdown / Smogon chaos format id:
-
-```text
-gen9championsvgc2026regmabo3
-```
-
 ## Ground Truth
 
 Damage calculations are delegated to:
@@ -24,15 +18,14 @@ Damage calculations are delegated to:
 damage_calc = { package = "pkmn-dmg-lib", git = "https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git", features = ["serde"] }
 ```
 
-This project generates legal Champions SP spreads, parses sets, fetches stats,
-and builds damage inputs. It does not reimplement damage formulas.
+This project generates legal Champions SP spreads, parses sets, and builds
+damage inputs. It does not reimplement damage formulas.
 
 ## Features
 
 - CLI for parsing Showdown sets, checking final Champions stats, running damage
   calcs, and searching offensive/defensive spreads.
 - Public Rust API for external tools and visualizers.
-- Smogon usage-data fetching/cache helpers for Champions formats.
 - CLI/library-only crate. The embedded alpha WebUI was removed; see
   `handout.md` for the handoff notes for a future separate WebUI.
 
@@ -55,6 +48,27 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
+## WASM
+
+Build the Rust library for browser packaging:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo build --lib --target wasm32-unknown-unknown
+```
+
+The wasm module exports JSON-string functions for browser callers:
+
+- `loadMetadata()`
+- `calculateDamage(requestJson)`
+- `findMinHpDefSurvival(requestJson)`
+- `findMinCombinedHpDefSurvival(requestJson)`
+- `findMinOffensiveKo(requestJson)`
+- `runDefensiveOptimization(requestJson)`
+- `runOffensiveOptimization(requestJson)`
+
+Use `wasm-bindgen` or `wasm-pack` to generate JavaScript glue for the browser.
+
 ## Local Damage Library Development
 
 For local work, add this to `Cargo.toml` temporarily:
@@ -65,12 +79,6 @@ pkmn-dmg-lib = { path = "../pkmn-dmg-lib-rs" }
 ```
 
 ## Commands
-
-Fetch latest available monthly chaos data:
-
-```sh
-cargo run -- fetch --month latest --rating 1760
-```
 
 Parse a Showdown set:
 
@@ -176,7 +184,6 @@ Implemented first:
 - stat conversion wrapper around `pkmn-dmg-lib-rs`
 - Champions data resolver from `damage_calc::data::CHAMPIONS_DATA_JSON`
 - pinned Champions species/item/ability lists from `pkmn-dmg-lib-rs`
-- Smogon chaos fetch/cache/normalization
 - legal SP spread generation
 - single benchmark damage bridge
 - basic ranked defensive/offensive search
