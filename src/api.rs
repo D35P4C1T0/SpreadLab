@@ -622,6 +622,31 @@ mod tests {
     }
 
     #[test]
+    fn dual_wingbeat_counts_sitrus_healing_between_hits() {
+        let data = ChampionsData::load().unwrap();
+        let attacker = parse_set("Aerodactyl\nSPs: 32 Atk\n- Dual Wingbeat").unwrap();
+        let no_item_defender = parse_set("Sneasler\nSPs: 0 HP / 21 Def\n- Protect").unwrap();
+        let sitrus_defender =
+            parse_set("Sneasler @ Sitrus Berry\nSPs: 0 HP / 21 Def\n- Protect").unwrap();
+
+        let no_item = calculate_benchmark(
+            &data,
+            &DamageBenchmark::new(attacker.clone(), no_item_defender, "Dual Wingbeat"),
+        )
+        .unwrap();
+        let sitrus = calculate_benchmark(
+            &data,
+            &DamageBenchmark::new(attacker, sitrus_defender, "Dual Wingbeat"),
+        )
+        .unwrap();
+
+        assert_eq!(sitrus.hit_rolls.len(), 2);
+        assert_eq!((sitrus.min_damage, sitrus.max_damage), (144, 172));
+        assert_eq!(no_item.ko_chance, Some(0.62890625));
+        assert_eq!(sitrus.ko_chance, Some(0.078125));
+    }
+
+    #[test]
     fn calculates_damage_calc_suffixed_sneasler_close_combat() {
         let data = ChampionsData::load().unwrap();
         let response = calculate_damage_request_with_data(

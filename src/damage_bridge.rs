@@ -56,6 +56,9 @@ pub fn calculate_benchmark(
     move_.times_affected = benchmark.move_times_affected;
     move_.targets_single_target =
         move_.targets_single_target || benchmark.attacker.move_targets_single_target;
+    if let Some(hits) = fixed_hit_count(&move_.name) {
+        move_.hits = hits;
+    }
     if is_slice_move(&move_.name) {
         move_.is_slice = true;
     }
@@ -135,6 +138,15 @@ fn is_skill_link_move(name: &str) -> bool {
             | "Tail Slap"
             | "Water Shuriken"
     )
+}
+
+fn fixed_hit_count(name: &str) -> Option<u8> {
+    match name {
+        "Double Hit" | "Double Iron Bash" | "Double Kick" | "Double Shock" | "Dual Chop"
+        | "Dual Wingbeat" | "Gear Grind" | "Tachyon Cutter" | "Twin Beam" | "Twinneedle" => Some(2),
+        "Surging Strikes" | "Triple Axel" | "Triple Dive" | "Triple Kick" => Some(3),
+        _ => None,
+    }
 }
 
 fn is_slice_move(name: &str) -> bool {
