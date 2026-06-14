@@ -1,4 +1,4 @@
-use crate::stats::{StatError, StatPoints, MAX_STAT_POINTS, MAX_TOTAL_STAT_POINTS};
+use crate::stats::{StatError, StatPoints, MAX_STAT_POINTS};
 use damage_calc::{Nature, StatusCondition};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -11,8 +11,6 @@ pub enum ShowdownError {
     MultipleTrainingLines,
     #[error("Showdown set has a malformed {0} line")]
     MalformedTrainingLine(&'static str),
-    #[error("Showdown set SPs exceed the {MAX_TOTAL_STAT_POINTS}-point cap")]
-    StatPointsOverCap,
     #[error("unknown nature: {0}")]
     UnknownNature(String),
     #[error(transparent)]
@@ -210,9 +208,6 @@ fn parse_training_payload(
 
     if parsed == 0 {
         return Err(ShowdownError::MalformedTrainingLine(label));
-    }
-    if points.total() > MAX_TOTAL_STAT_POINTS {
-        return Err(ShowdownError::StatPointsOverCap);
     }
     Ok((points, nature_hint))
 }
@@ -454,6 +449,16 @@ mod tests {
 
         assert_eq!(parsed.stat_points, StatPoints::new(20, 10, 21, 0, 0, 15));
         assert_eq!(parsed.nature, Nature::Adamant);
+    }
+
+    #[test]
+    fn parses_spreads_over_66_total_points() {
+        let parsed = parse_set(
+            "Sneasler\nSPs: 32 HP / 32 Atk / 32 Def / 32 SpA / 32 SpD / 32 Spe\n- Close Combat",
+        )
+        .unwrap();
+
+        assert_eq!(parsed.stat_points, StatPoints::new(32, 32, 32, 32, 32, 32));
     }
 
     #[test]

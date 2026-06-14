@@ -94,8 +94,8 @@ mod tests {
     #[test]
     fn generates_locked_full_spend() {
         let search = SpreadSearch {
-            exact_total: Some(66),
-            max_total: 66,
+            exact_total: Some(MAX_TOTAL_STAT_POINTS),
+            max_total: MAX_TOTAL_STAT_POINTS,
             locked: LockedStats {
                 attack: Some(32),
                 speed: Some(32),
@@ -104,6 +104,8 @@ mod tests {
         };
         let spreads = generate_spreads(search);
         assert!(spreads.contains(&StatPoints::new(0, 32, 2, 0, 0, 32)));
-        assert!(spreads.iter().all(|spread| spread.total() == 66));
+        assert!(spreads
+            .iter()
+            .all(|spread| spread.total() == MAX_TOTAL_STAT_POINTS));
     }
 }

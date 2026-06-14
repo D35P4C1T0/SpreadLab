@@ -9,8 +9,6 @@ pub const MAX_TOTAL_STAT_POINTS: u16 = 66;
 pub enum StatError {
     #[error("stat points for {stat} exceed {MAX_STAT_POINTS}: {value}")]
     StatOverCap { stat: &'static str, value: u16 },
-    #[error("total stat points exceed {MAX_TOTAL_STAT_POINTS}: {total}")]
-    TotalOverCap { total: u16 },
     #[error("damage calculator rejected stats: {0}")]
     DamageCalc(String),
 }
@@ -105,11 +103,6 @@ impl StatPoints {
             if value > MAX_STAT_POINTS {
                 return Err(StatError::StatOverCap { stat, value });
             }
-        }
-
-        let total = self.total();
-        if total > MAX_TOTAL_STAT_POINTS {
-            return Err(StatError::TotalOverCap { total });
         }
 
         Ok(())
@@ -214,10 +207,7 @@ mod tests {
                 value: 33
             })
         );
-        assert_eq!(
-            StatPoints::new(32, 32, 2, 1, 0, 0).validate(),
-            Err(StatError::TotalOverCap { total: 67 })
-        );
+        assert_eq!(StatPoints::new(32, 32, 32, 32, 32, 32).validate(), Ok(()));
     }
 
     #[test]
