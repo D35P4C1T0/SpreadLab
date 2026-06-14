@@ -1,9 +1,9 @@
 use crate::damage_bridge::{calculate_benchmark, DamageBenchmark};
-use crate::data::ChampionsData;
+use crate::data::{parse_item, ChampionsData};
 use crate::showdown::build_champions_sp_line;
 use crate::spreads::{generate_spreads, SpreadSearch};
 use crate::stats::{champions_final_stats, FinalStats, StatPoints};
-use damage_calc::{DamageResult, Nature};
+use damage_calc::{DamageResult, Item, Nature};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -171,14 +171,10 @@ pub fn hp_def_survival_search_from_hp_percent(
                 candidate.defender.nature = *nature;
                 candidate.defender.stat_points = sps;
 
-                let result = calculate_benchmark(data, &candidate)?;
                 let final_stats = champions_final_stats(species.base_stats(), *nature, sps)?;
-                let damage_rolls = result.damage_rolls.clone();
-                let mut summary = DamageSummary::from(result);
-                summary.ko_chance = Some(ko_chance_from_rolls(
-                    &damage_rolls,
-                    current_hp_from_percent(final_stats.hp, hp_percent),
-                ));
+                candidate.defender_current_hp =
+                    Some(current_hp_from_percent(final_stats.hp, hp_percent));
+                let summary = DamageSummary::from(calculate_benchmark(data, &candidate)?);
                 let ko_chance = summary.ko_chance.unwrap_or(0.0);
                 let spread = SurvivalSpread {
                     rank: 0,
@@ -623,17 +619,6 @@ fn current_hp_from_percent(max_hp: u16, hp_percent: f32) -> u16 {
     hp.clamp(1, max_hp)
 }
 
-fn ko_chance_from_rolls(rolls: &[u16], starting_hp: u16) -> f32 {
-    if rolls.is_empty() {
-        return 0.0;
-    }
-    let ko_rolls = rolls
-        .iter()
-        .filter(|damage| **damage >= starting_hp)
-        .count();
-    ko_rolls as f32 / rolls.len() as f32
-}
-
 fn sequence_damage_summary(
     data: &ChampionsData,
     benchmarks: &[DamageBenchmark],
@@ -647,6 +632,13 @@ fn sequence_damage_summary(
     let mut min_damage = u16::MAX;
     let mut max_damage = 0u16;
     let mut cache = HashMap::new();
+    let defender_item = benchmarks
+        .first()
+        .map(|benchmark| &benchmark.defender)
+        .and_then(|defender| defender.item.as_deref())
+        .map(parse_item)
+        .transpose()?
+        .unwrap_or(Item::None);
     count_sequence_rolls(
         data,
         benchmarks,
@@ -655,6 +647,8 @@ fn sequence_damage_summary(
         &mut cache,
         0,
         starting_hp,
+        max_hp,
+        defender_item,
         0,
         1.0,
         &mut total_probability,
@@ -688,6 +682,8 @@ fn count_sequence_rolls(
     cache: &mut HashMap<(usize, u16), Vec<u16>>,
     index: usize,
     current_hp: u16,
+    max_hp: u16,
+    defender_item: Item,
     running_damage: u16,
     probability: f64,
     total_probability: &mut f64,
@@ -724,6 +720,30 @@ fn count_sequence_rolls(
     let roll_probability = probability / rolls.len() as f64;
     for damage in rolls {
         let next_damage = running_damage.saturating_add(damage);
+        if defender_item == Item::FocusSash
+            && current_hp == max_hp
+            && damage >= current_hp
+            && damage > 0
+        {
+            count_sequence_rolls(
+                data,
+                benchmarks,
+                nature,
+                sps,
+                cache,
+                index + 1,
+                1,
+                max_hp,
+                Item::None,
+                next_damage,
+                roll_probability,
+                total_probability,
+                ko_probability,
+                min_damage,
+                max_damage,
+            )?;
+            continue;
+        }
         if damage >= current_hp {
             *total_probability += roll_probability;
             *ko_probability += roll_probability;
@@ -738,7 +758,9 @@ fn count_sequence_rolls(
             sps,
             cache,
             index + 1,
-            current_hp - damage,
+            apply_leftovers_recovery(current_hp - damage, max_hp, defender_item),
+            max_hp,
+            defender_item,
             next_damage,
             roll_probability,
             total_probability,
@@ -748,4 +770,12 @@ fn count_sequence_rolls(
         )?;
     }
     Ok(())
+}
+
+fn apply_leftovers_recovery(current_hp: u16, max_hp: u16, item: Item) -> u16 {
+    if item == Item::Leftovers && current_hp > 0 && current_hp < max_hp {
+        current_hp.saturating_add(max_hp / 16).min(max_hp)
+    } else {
+        current_hp
+    }
 }

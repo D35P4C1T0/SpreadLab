@@ -689,6 +689,34 @@ mod tests {
     }
 
     #[test]
+    fn focus_sash_counts_in_min_survival_search() {
+        let data = ChampionsData::load().unwrap();
+        let response = find_min_hp_def_survival_with_data(
+            &data,
+            HpDefSurvivalRequest {
+                attacker_set:
+                    "Sneasler\nAbility: Unburden\nSPs: 32 Atk\nAdamant Nature\n- Close Combat"
+                        .to_owned(),
+                defender_set: "Kingambit @ Focus Sash\n- Protect".to_owned(),
+                move_name: "Close Combat".to_owned(),
+                max_ko_chance: 0.0,
+                hp_percent: None,
+                nature: Some(Nature::Hardy),
+                optimize_nature: false,
+                limit: 1,
+                move_times_affected: 0,
+                critical: false,
+                field: None,
+            },
+        )
+        .unwrap();
+
+        let best = response.best.expect("Focus Sash should prevent full-HP KO");
+        assert_eq!(best.total_points, 0);
+        assert_eq!(best.result.ko_chance, Some(0.0));
+    }
+
+    #[test]
     fn calculates_damage_calc_suffixed_sneasler_close_combat() {
         let data = ChampionsData::load().unwrap();
         let response = calculate_damage_request_with_data(
@@ -1129,6 +1157,47 @@ mod tests {
             (best.final_stats.hp as f32 * 0.5).ceil() as u16
         );
         assert!(best.combined.ko_chance > 0.0);
+    }
+
+    #[test]
+    fn leftovers_recovery_counts_between_sequence_hits() {
+        let data = ChampionsData::load().unwrap();
+        let request = |defender_set: &str| CombinedHpDefSurvivalRequest {
+            defender_set: defender_set.to_owned(),
+            hits: vec![
+                IncomingHitRequest {
+                    attacker_set: "Sneasler\nSPs: 0 Atk\n- Fake Out".to_owned(),
+                    move_name: "Fake Out".to_owned(),
+                    move_times_affected: 0,
+                    critical: false,
+                    field: None,
+                },
+                IncomingHitRequest {
+                    attacker_set: "Sneasler\nSPs: 0 Atk\n- Fake Out".to_owned(),
+                    move_name: "Fake Out".to_owned(),
+                    move_times_affected: 0,
+                    critical: false,
+                    field: None,
+                },
+            ],
+            max_ko_chance: 1.0,
+            hp_percent: Some(10.0),
+            nature: Some(Nature::Hardy),
+            optimize_nature: false,
+            limit: 1,
+        };
+
+        let no_item =
+            find_min_combined_hp_def_survival_with_data(&data, request("Kingambit\n- Protect"))
+                .unwrap();
+        let leftovers = find_min_combined_hp_def_survival_with_data(
+            &data,
+            request("Kingambit @ Leftovers\n- Protect"),
+        )
+        .unwrap();
+
+        assert_eq!(no_item.best.unwrap().combined.ko_chance, 0.51171875);
+        assert_eq!(leftovers.best.unwrap().combined.ko_chance, 0.0);
     }
 
     #[test]

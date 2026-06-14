@@ -407,10 +407,12 @@ pub fn parse_item(raw: &str) -> Result<Item, DataError> {
         "electricseed" => Item::ElectricSeed,
         "eviolite" => Item::Eviolite,
         "floatstone" => Item::FloatStone,
+        "focussash" => Item::FocusSash,
         "grassyseed" => Item::GrassySeed,
         "hearthflamemask" => Item::HearthflameMask,
         "ironball" => Item::IronBall,
         "lightball" => Item::LightBall,
+        "leftovers" => Item::Leftovers,
         "lifeorb" => Item::LifeOrb,
         "mentalherb" => Item::MentalHerb,
         "mistyseed" => Item::MistySeed,
@@ -683,6 +685,8 @@ mod tests {
         assert_eq!(parse_ability("Swift Swim").unwrap(), Ability::SwiftSwim);
         assert_eq!(parse_item("Choice Scarf").unwrap(), Item::ChoiceScarf);
         assert_eq!(parse_item("choicescarf").unwrap(), Item::ChoiceScarf);
+        assert_eq!(parse_item("Focus Sash").unwrap(), Item::FocusSash);
+        assert_eq!(parse_item("Leftovers").unwrap(), Item::Leftovers);
         assert_eq!(parse_item("White Herb").unwrap(), Item::None);
         assert_eq!(parse_item("nothing").unwrap(), Item::None);
     }
