@@ -107,6 +107,8 @@ pub struct FieldRequest {
     #[serde(default)]
     pub defender_friend_guard: bool,
     #[serde(default)]
+    pub defender_leech_seed: bool,
+    #[serde(default)]
     pub attacker_boosts: BoostsRequest,
     #[serde(default)]
     pub defender_boosts: BoostsRequest,
@@ -480,6 +482,7 @@ impl FieldRequest {
             helping_hand: self.helping_hand,
             attacker_tailwind: self.attacker_tailwind,
             defender_tailwind: self.defender_tailwind,
+            defender_leech_seed: self.defender_leech_seed,
             defender_side: SideConditions {
                 reflect: self.defender_reflect,
                 light_screen: self.defender_light_screen,
@@ -1198,6 +1201,80 @@ mod tests {
 
         assert_eq!(no_item.best.unwrap().combined.ko_chance, 0.51171875);
         assert_eq!(leftovers.best.unwrap().combined.ko_chance, 0.0);
+    }
+
+    #[test]
+    fn poison_tick_counts_between_sequence_hits() {
+        let data = ChampionsData::load().unwrap();
+        let response = find_min_combined_hp_def_survival_with_data(
+            &data,
+            CombinedHpDefSurvivalRequest {
+                defender_set: "Kingambit\nStatus: Poisoned\n- Protect".to_owned(),
+                hits: vec![
+                    IncomingHitRequest {
+                        attacker_set: "Sneasler\nSPs: 0 Atk\n- Fake Out".to_owned(),
+                        move_name: "Fake Out".to_owned(),
+                        move_times_affected: 0,
+                        critical: false,
+                        field: None,
+                    },
+                    IncomingHitRequest {
+                        attacker_set: "Sneasler\nSPs: 0 Atk\n- Fake Out".to_owned(),
+                        move_name: "Fake Out".to_owned(),
+                        move_times_affected: 0,
+                        critical: false,
+                        field: None,
+                    },
+                ],
+                max_ko_chance: 1.0,
+                hp_percent: Some(10.0),
+                nature: Some(Nature::Hardy),
+                optimize_nature: false,
+                limit: 1,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(response.best.unwrap().combined.ko_chance, 1.0);
+    }
+
+    #[test]
+    fn leech_seed_tick_counts_between_sequence_hits() {
+        let data = ChampionsData::load().unwrap();
+        let seeded_field = Some(FieldRequest {
+            defender_leech_seed: true,
+            ..FieldRequest::default()
+        });
+        let response = find_min_combined_hp_def_survival_with_data(
+            &data,
+            CombinedHpDefSurvivalRequest {
+                defender_set: "Kingambit\n- Protect".to_owned(),
+                hits: vec![
+                    IncomingHitRequest {
+                        attacker_set: "Sneasler\nSPs: 0 Atk\n- Fake Out".to_owned(),
+                        move_name: "Fake Out".to_owned(),
+                        move_times_affected: 0,
+                        critical: false,
+                        field: seeded_field,
+                    },
+                    IncomingHitRequest {
+                        attacker_set: "Sneasler\nSPs: 0 Atk\n- Fake Out".to_owned(),
+                        move_name: "Fake Out".to_owned(),
+                        move_times_affected: 0,
+                        critical: false,
+                        field: seeded_field,
+                    },
+                ],
+                max_ko_chance: 1.0,
+                hp_percent: Some(10.0),
+                nature: Some(Nature::Hardy),
+                optimize_nature: false,
+                limit: 1,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(response.best.unwrap().combined.ko_chance, 1.0);
     }
 
     #[test]

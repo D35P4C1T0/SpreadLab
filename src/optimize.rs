@@ -1,9 +1,11 @@
-use crate::damage_bridge::{calculate_benchmark, DamageBenchmark};
+use crate::damage_bridge::{build_pokemon, calculate_benchmark, DamageBenchmark};
 use crate::data::{parse_item, ChampionsData};
 use crate::showdown::build_champions_sp_line;
 use crate::spreads::{generate_spreads, SpreadSearch};
 use crate::stats::{champions_final_stats, FinalStats, StatPoints};
-use damage_calc::{DamageResult, Item, Nature};
+use damage_calc::{
+    Ability, DamageResult, Item, Nature, PokemonType, StatusCondition, Terrain, Weather,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -646,11 +648,10 @@ fn sequence_damage_summary(
         benchmarks,
         nature,
         sps,
+        max_hp,
         &mut cache,
         0,
-        starting_hp,
-        max_hp,
-        defender_item,
+        SequenceState::new(starting_hp, defender_item),
         0,
         1.0,
         &mut total_probability,
@@ -675,17 +676,33 @@ fn sequence_damage_summary(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct SequenceState {
+    hp: u16,
+    item: Item,
+    toxic_counter: u8,
+}
+
+impl SequenceState {
+    fn new(hp: u16, item: Item) -> Self {
+        Self {
+            hp,
+            item,
+            toxic_counter: 1,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn count_sequence_rolls(
     data: &ChampionsData,
     benchmarks: &[DamageBenchmark],
     nature: Nature,
     sps: StatPoints,
-    cache: &mut HashMap<(usize, u16), Vec<u16>>,
-    index: usize,
-    current_hp: u16,
     max_hp: u16,
-    defender_item: Item,
+    cache: &mut HashMap<(usize, u16, Item), Vec<u16>>,
+    index: usize,
+    state: SequenceState,
     running_damage: u16,
     probability: f64,
     total_probability: &mut f64,
@@ -700,15 +717,16 @@ fn count_sequence_rolls(
         return Ok(());
     }
 
-    let rolls = if let Some(rolls) = cache.get(&(index, current_hp)).cloned() {
+    let rolls = if let Some(rolls) = cache.get(&(index, state.hp, state.item)).cloned() {
         rolls
     } else {
         let mut candidate = benchmarks[index].clone();
         candidate.defender.nature = nature;
         candidate.defender.stat_points = sps;
-        candidate.defender_current_hp = Some(current_hp);
+        candidate.defender.item = Some(format!("{:?}", state.item));
+        candidate.defender_current_hp = Some(state.hp);
         let result = calculate_benchmark(data, &candidate)?;
-        cache.insert((index, current_hp), result.damage_rolls.clone());
+        cache.insert((index, state.hp, state.item), result.damage_rolls.clone());
         result.damage_rolls
     };
 
@@ -722,21 +740,36 @@ fn count_sequence_rolls(
     let roll_probability = probability / rolls.len() as f64;
     for damage in rolls {
         let next_damage = running_damage.saturating_add(damage);
-        if defender_item == Item::FocusSash
-            && current_hp == max_hp
-            && damage >= current_hp
-            && damage > 0
-        {
+        if state.item == Item::FocusSash && state.hp == max_hp && damage >= state.hp && damage > 0 {
             count_sequence_rolls(
                 data,
                 benchmarks,
                 nature,
                 sps,
+                max_hp,
                 cache,
                 index + 1,
-                1,
-                max_hp,
-                Item::None,
+                match apply_end_turn_effects(
+                    data,
+                    &benchmarks[index],
+                    nature,
+                    sps,
+                    max_hp,
+                    SequenceState {
+                        hp: 1,
+                        item: Item::None,
+                        toxic_counter: state.toxic_counter,
+                    },
+                )? {
+                    Some(next_state) => next_state,
+                    None => {
+                        *total_probability += roll_probability;
+                        *ko_probability += roll_probability;
+                        *min_damage = (*min_damage).min(next_damage);
+                        *max_damage = (*max_damage).max(next_damage);
+                        continue;
+                    }
+                },
                 next_damage,
                 roll_probability,
                 total_probability,
@@ -746,7 +779,7 @@ fn count_sequence_rolls(
             )?;
             continue;
         }
-        if damage >= current_hp {
+        if damage >= state.hp {
             *total_probability += roll_probability;
             *ko_probability += roll_probability;
             *min_damage = (*min_damage).min(next_damage);
@@ -758,11 +791,30 @@ fn count_sequence_rolls(
             benchmarks,
             nature,
             sps,
+            max_hp,
             cache,
             index + 1,
-            apply_leftovers_recovery(current_hp - damage, max_hp, defender_item),
-            max_hp,
-            defender_item,
+            match apply_end_turn_effects(
+                data,
+                &benchmarks[index],
+                nature,
+                sps,
+                max_hp,
+                SequenceState {
+                    hp: state.hp - damage,
+                    item: state.item,
+                    toxic_counter: state.toxic_counter,
+                },
+            )? {
+                Some(next_state) => next_state,
+                None => {
+                    *total_probability += roll_probability;
+                    *ko_probability += roll_probability;
+                    *min_damage = (*min_damage).min(next_damage);
+                    *max_damage = (*max_damage).max(next_damage);
+                    continue;
+                }
+            },
             next_damage,
             roll_probability,
             total_probability,
@@ -774,10 +826,145 @@ fn count_sequence_rolls(
     Ok(())
 }
 
-fn apply_leftovers_recovery(current_hp: u16, max_hp: u16, item: Item) -> u16 {
-    if item == Item::Leftovers && current_hp > 0 && current_hp < max_hp {
-        current_hp.saturating_add(max_hp / 16).min(max_hp)
-    } else {
-        current_hp
+fn apply_end_turn_effects(
+    data: &ChampionsData,
+    benchmark: &DamageBenchmark,
+    nature: Nature,
+    sps: StatPoints,
+    max_hp: u16,
+    mut state: SequenceState,
+) -> Result<Option<SequenceState>, OptimizeError> {
+    if state.hp == 0 {
+        return Ok(None);
     }
+
+    let mut defender_set = benchmark.defender.clone();
+    defender_set.nature = nature;
+    defender_set.stat_points = sps;
+    let mut defender = build_pokemon(data, &defender_set)?;
+    defender.item = state.item;
+
+    let residual_sixteenth = max_hp / 16;
+    let residual_eighth = max_hp / 8;
+    let magic_guard = defender.ability == Ability::MagicGuard;
+    let mut healing_or_damage = 0i16;
+
+    match benchmark.field.weather {
+        Weather::Sun | Weather::HarshSun => {
+            if matches!(defender.ability, Ability::DrySkin | Ability::SolarPower) {
+                healing_or_damage -= residual_eighth as i16;
+            }
+        }
+        Weather::Rain | Weather::HeavyRain => {
+            if defender.ability == Ability::DrySkin {
+                healing_or_damage += residual_eighth as i16;
+            } else if defender.ability == Ability::RainDish {
+                healing_or_damage += residual_sixteenth as i16;
+            }
+        }
+        Weather::Sand => {
+            if !magic_guard
+                && !defender.has_type(PokemonType::Rock)
+                && !defender.has_type(PokemonType::Ground)
+                && !defender.has_type(PokemonType::Steel)
+                && !matches!(
+                    defender.ability,
+                    Ability::Overcoat | Ability::SandForce | Ability::SandRush | Ability::SandVeil
+                )
+            {
+                healing_or_damage -= residual_sixteenth as i16;
+            }
+        }
+        Weather::Hail => {
+            if defender.ability == Ability::IceBody {
+                healing_or_damage += residual_sixteenth as i16;
+            } else if !magic_guard
+                && !defender.has_type(PokemonType::Ice)
+                && !matches!(defender.ability, Ability::Overcoat | Ability::SnowCloak)
+            {
+                healing_or_damage -= residual_sixteenth as i16;
+            }
+        }
+        Weather::Snow => {
+            if defender.ability == Ability::IceBody {
+                healing_or_damage += residual_sixteenth as i16;
+            }
+        }
+        Weather::None | Weather::StrongWinds => {}
+    }
+
+    if state.item == Item::Leftovers {
+        healing_or_damage += residual_sixteenth as i16;
+    }
+
+    if benchmark.field.terrain == Terrain::Grassy && is_grounded(&defender, &benchmark.field) {
+        healing_or_damage += residual_sixteenth as i16;
+    }
+
+    if healing_or_damage > 0 {
+        state.hp = state
+            .hp
+            .saturating_add(healing_or_damage as u16)
+            .min(max_hp);
+    } else if healing_or_damage < 0 {
+        state.hp = state.hp.saturating_sub((-healing_or_damage) as u16);
+        if state.hp == 0 {
+            return Ok(None);
+        }
+    }
+
+    if !magic_guard {
+        match defender.status {
+            StatusCondition::Poisoned => {
+                if defender.ability == Ability::PoisonHeal {
+                    state.hp = state.hp.saturating_add(residual_eighth).min(max_hp);
+                } else {
+                    state.hp = state.hp.saturating_sub(residual_eighth);
+                }
+            }
+            StatusCondition::BadlyPoisoned => {
+                if defender.ability == Ability::PoisonHeal {
+                    state.hp = state.hp.saturating_add(residual_eighth).min(max_hp);
+                } else {
+                    let toxic_counter = state.toxic_counter.max(1);
+                    state.hp = state
+                        .hp
+                        .saturating_sub(max_hp.saturating_mul(toxic_counter as u16) / 16);
+                    state.toxic_counter = toxic_counter.saturating_add(1);
+                }
+            }
+            StatusCondition::Burned => {
+                let burn_damage = if defender.ability == Ability::Heatproof {
+                    max_hp / 16 / 2
+                } else {
+                    max_hp / 16
+                };
+                state.hp = state.hp.saturating_sub(burn_damage);
+            }
+            StatusCondition::Healthy
+            | StatusCondition::Paralyzed
+            | StatusCondition::Asleep
+            | StatusCondition::Drowsy
+            | StatusCondition::Frozen => {}
+        }
+    }
+
+    if benchmark.field.defender_leech_seed && !magic_guard && !defender.has_type(PokemonType::Grass)
+    {
+        state.hp = state.hp.saturating_sub(residual_eighth);
+    }
+
+    if state.hp == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(state))
+    }
+}
+
+fn is_grounded(pokemon: &damage_calc::Pokemon, field: &damage_calc::Field) -> bool {
+    field.gravity
+        || pokemon.item == Item::IronBall
+        || (pokemon.ability != Ability::Levitate
+            && pokemon.item != Item::AirBalloon
+            && !pokemon.has_type(PokemonType::Flying))
 }

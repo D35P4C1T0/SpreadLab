@@ -259,7 +259,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 [[package]]
 name = "pkmn-dmg-lib"
 version = "0.1.0"
-source = "git+https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git#74f699811b813cc667461376771714c3aeda18a9"
+source = "git+https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git#6dce2ed3b772edbd25e8f427942c38c8ba00dd91"
 dependencies = [
  "serde",
  "thiserror",
