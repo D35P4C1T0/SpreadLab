@@ -1226,7 +1226,7 @@ mod tests {
     }
 
     #[test]
-    fn optimized_nature_mode_only_checks_boosted_and_neutral() {
+    fn optimized_nature_mode_only_checks_boosted_nature() {
         let data = ChampionsData::load().unwrap();
         let response = find_min_offensive_ko_with_data(
             &data,
@@ -1249,7 +1249,7 @@ mod tests {
         assert!(response
             .matches
             .iter()
-            .all(|spread| matches!(spread.nature, Nature::Adamant | Nature::Hardy)));
+            .all(|spread| matches!(spread.nature, Nature::Adamant)));
     }
 
     #[derive(Clone, Copy)]

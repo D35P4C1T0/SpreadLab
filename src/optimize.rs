@@ -476,22 +476,24 @@ pub fn all_natures() -> [Nature; 25] {
 pub fn optimized_offensive_natures(
     data: &ChampionsData,
     benchmark: &DamageBenchmark,
-) -> Result<[Nature; 2], OptimizeError> {
+) -> Result<Vec<Nature>, OptimizeError> {
     let move_data = data.move_data(&benchmark.move_name)?;
     Ok(match move_data.category.as_str() {
-        "Special" => [Nature::Modest, Nature::Hardy],
-        _ => [Nature::Adamant, Nature::Hardy],
+        "Special" => vec![Nature::Modest],
+        "Physical" => vec![Nature::Adamant],
+        _ => Vec::new(),
     })
 }
 
 pub fn optimized_defensive_natures(
     data: &ChampionsData,
     benchmark: &DamageBenchmark,
-) -> Result<[Nature; 2], OptimizeError> {
+) -> Result<Vec<Nature>, OptimizeError> {
     let move_data = data.move_data(&benchmark.move_name)?;
     Ok(match move_data.category.as_str() {
-        "Special" => [Nature::Calm, Nature::Hardy],
-        _ => [Nature::Bold, Nature::Hardy],
+        "Special" => vec![Nature::Calm],
+        "Physical" => vec![Nature::Bold],
+        _ => Vec::new(),
     })
 }
 
@@ -510,10 +512,10 @@ pub fn optimized_combined_defensive_natures(
         }
     }
     Ok(match (has_physical, has_special) {
-        (true, true) => vec![Nature::Bold, Nature::Calm, Nature::Hardy],
-        (true, false) => vec![Nature::Bold, Nature::Hardy],
-        (false, true) => vec![Nature::Calm, Nature::Hardy],
-        (false, false) => vec![Nature::Hardy],
+        (true, true) => vec![Nature::Bold, Nature::Calm],
+        (true, false) => vec![Nature::Bold],
+        (false, true) => vec![Nature::Calm],
+        (false, false) => Vec::new(),
     })
 }
 
