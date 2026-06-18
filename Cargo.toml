@@ -20,7 +20,10 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
-damage_calc = { package = "pkmn-dmg-lib", git = "https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git", features = ["serde"] }
+damage_calc = { package = "pkmn-dmg-lib", git = "https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git", rev = "f415eb36b2899795e0908f9fb3ae1fae242a0968", features = ["serde"] }
+
+[patch."https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git"]
+pkmn-dmg-lib = { path = "../pkmn-dmg-lib" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

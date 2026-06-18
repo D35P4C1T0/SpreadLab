@@ -217,7 +217,7 @@ pub fn load_metadata() -> Result<MetadataResponse, ApiError> {
     let data = ChampionsData::load()?;
     let mut response = MetadataResponse {
         species: data.species_names().map(str::to_owned).collect(),
-        regulation: data.regulation_m_a_names().map(str::to_owned).collect(),
+        regulation: data.regulation_m_b_names().map(str::to_owned).collect(),
         items: data.item_names().map(str::to_owned).collect(),
         abilities: data.ability_names().map(str::to_owned).collect(),
         moves: data.move_names().map(str::to_owned).collect(),
@@ -1071,11 +1071,11 @@ mod tests {
                 expected_unique: &[102, 104, 108, 110, 114, 116, 120],
                 expected_roll_count: None,
             },
-            BenchmarkCase {
-                name: "Supreme Overlord Kingambit with 3 fainted allies",
-                attacker:
-                    "Kingambit\nAbility: Supreme Overlord\nSupreme Overlord Allies: 3\n- Kowtow Cleave",
-                defender: "Gengar\n- Protect",
+        BenchmarkCase {
+            name: "Supreme Overlord Kingambit with 3 fainted allies",
+            attacker:
+                "Kingambit\nAbility: Supreme Overlord\nSupreme Overlord Allies: 3\n- Kowtow Cleave",
+            defender: "Gengar\n- Protect",
                 move_name: "Kowtow Cleave",
                 field: None,
                 expected_min: 242,
@@ -1083,10 +1083,21 @@ mod tests {
                 expected_unique: &[
                     242, 246, 248, 252, 254, 258, 260, 264, 266, 270, 272, 276, 278, 282,
                     284, 288,
-                ],
-                expected_roll_count: None,
-            },
-        ];
+            ],
+            expected_roll_count: None,
+        },
+        BenchmarkCase {
+            name: "Fire Mane Mega Pyroar Heat Wave",
+            attacker: "Mega Pyroar\nAbility: Fire Mane\nSPs: 0+ SpA\n- Heat Wave",
+            defender: "Aegislash (Shield Forme)\nSPs: 32 HP / 2 SpD\n- Protect",
+            move_name: "Heat Wave",
+            field: None,
+            expected_min: 120,
+            expected_max: 144,
+            expected_unique: &[120, 122, 126, 128, 132, 134, 138, 140, 144],
+            expected_roll_count: Some(16),
+        },
+    ];
 
         for case in cases {
             assert_benchmark_case(&data, case);

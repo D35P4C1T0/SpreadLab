@@ -3,7 +3,7 @@
 SpreadLab is an alpha Pokemon Champions Stat Point optimizer for:
 
 ```text
-[Gen 9 Champions] VGC 2026 Reg M-A (Bo3)
+[Gen 9 Champions] VGC 2026 Reg M-B (Bo3)
 ```
 
 > Alpha status: interfaces, CLI output, public API structs, and optimizer reports may
@@ -15,7 +15,7 @@ SpreadLab is an alpha Pokemon Champions Stat Point optimizer for:
 Damage calculations are delegated to:
 
 ```toml
-damage_calc = { package = "pkmn-dmg-lib", git = "https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git", features = ["serde"] }
+damage_calc = { package = "pkmn-dmg-lib", git = "https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git", rev = "f415eb36b2899795e0908f9fb3ae1fae242a0968", features = ["serde"] }
 ```
 
 This project generates legal Champions SP spreads, parses sets, and builds
@@ -71,11 +71,11 @@ Use `wasm-bindgen` or `wasm-pack` to generate JavaScript glue for the browser.
 
 ## Local Damage Library Development
 
-For local work, add this to `Cargo.toml` temporarily:
+This checkout patches the git dependency to the local dmg library checkout:
 
 ```toml
 [patch."https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git"]
-pkmn-dmg-lib = { path = "../pkmn-dmg-lib-rs" }
+pkmn-dmg-lib = { path = "../pkmn-dmg-lib" }
 ```
 
 ## Commands

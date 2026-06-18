@@ -1,7 +1,7 @@
 use crate::showdown::parse_nature_name;
 use crate::stats::BaseStats;
 use damage_calc::data::champions::{
-    CHAMPIONS_ABILITIES, CHAMPIONS_ITEMS, CHAMPIONS_SPECIES, REGULATION_M_A_POKEMON,
+    CHAMPIONS_ABILITIES, CHAMPIONS_ITEMS, CHAMPIONS_SPECIES, REGULATION_M_B_POKEMON,
 };
 use damage_calc::{Ability, Category, Item, Move, PokemonType};
 use serde::Deserialize;
@@ -136,8 +136,8 @@ impl ChampionsData {
         CHAMPIONS_SPECIES.iter().map(|species| species.display_name)
     }
 
-    pub fn regulation_m_a_names(&self) -> impl Iterator<Item = &'static str> {
-        REGULATION_M_A_POKEMON.iter().copied()
+    pub fn regulation_m_b_names(&self) -> impl Iterator<Item = &'static str> {
+        REGULATION_M_B_POKEMON.iter().copied()
     }
 
     pub fn item_names(&self) -> impl Iterator<Item = &'static str> {
@@ -259,20 +259,26 @@ pub fn parse_ability(raw: &str) -> Result<Ability, DataError> {
         "dragonize" => Ability::Dragonize,
         "dryskin" => Ability::DrySkin,
         "eartheater" => Ability::EarthEater,
+        "eelevate" => Ability::Eelevate,
+        "effectspore" => Ability::EffectSpore,
+        "electricsurge" => Ability::ElectricSurge,
         "electromorphosis" => Ability::Electromorphosis,
         "embodyaspect" => Ability::EmbodyAspect,
         "filter" => Ability::Filter,
         "fairyaura" => Ability::FairyAura,
+        "firemane" => Ability::FireMane,
         "flareboost" => Ability::FlareBoost,
         "flashfire" => Ability::FlashFire,
         "flowergift" => Ability::FlowerGift,
         "flowerveil" => Ability::FlowerVeil,
         "fluffy" => Ability::Fluffy,
         "forecast" => Ability::Forecast,
+        "forewarn" => Ability::Forewarn,
         "friendguard" => Ability::FriendGuard,
         "furcoat" => Ability::FurCoat,
         "fullmetalbody" => Ability::FullMetalBody,
         "galvanize" => Ability::Galvanize,
+        "goodasgold" => Ability::GoodAsGold,
         "gooey" => Ability::Gooey,
         "grasspelt" => Ability::GrassPelt,
         "guarddog" => Ability::GuardDog,
@@ -666,6 +672,15 @@ mod tests {
     }
 
     #[test]
+    fn exposes_regulation_m_b_roster() {
+        let data = ChampionsData::load().unwrap();
+        assert_eq!(data.regulation_m_b_names().count(), 247);
+        assert!(data
+            .regulation_m_b_names()
+            .any(|name| name == "Mega Pyroar"));
+    }
+
+    #[test]
     fn parses_spread_key() {
         let (nature, points) = parse_spread_key("Jolly:0/32/2/0/0/32").unwrap();
         assert_eq!(nature, damage_calc::Nature::Jolly);
@@ -683,6 +698,15 @@ mod tests {
         assert_eq!(parse_ability("Rivalry").unwrap(), Ability::Rivalry);
         assert_eq!(parse_ability("Skill Link").unwrap(), Ability::SkillLink);
         assert_eq!(parse_ability("Swift Swim").unwrap(), Ability::SwiftSwim);
+        assert_eq!(parse_ability("Eelevate").unwrap(), Ability::Eelevate);
+        assert_eq!(parse_ability("Effect Spore").unwrap(), Ability::EffectSpore);
+        assert_eq!(
+            parse_ability("Electric Surge").unwrap(),
+            Ability::ElectricSurge
+        );
+        assert_eq!(parse_ability("Fire Mane").unwrap(), Ability::FireMane);
+        assert_eq!(parse_ability("Forewarn").unwrap(), Ability::Forewarn);
+        assert_eq!(parse_ability("Good as Gold").unwrap(), Ability::GoodAsGold);
         assert_eq!(parse_item("Choice Scarf").unwrap(), Item::ChoiceScarf);
         assert_eq!(parse_item("choicescarf").unwrap(), Item::ChoiceScarf);
         assert_eq!(parse_item("Focus Sash").unwrap(), Item::FocusSash);
