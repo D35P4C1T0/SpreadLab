@@ -1,7 +1,8 @@
 use crate::data::{ChampionsData, DataError};
 use crate::showdown::{ParsedSet, RivalryMode};
 use damage_calc::{
-    calculate_damage, Ability, Boosts, CalcInput, DamageResult, Field, Format, Pokemon, Ruleset,
+    calculate_damage, Ability, Boosts, CalcInput, DamageResult, EffectCount, Field, Format,
+    Pokemon, Ruleset,
 };
 use thiserror::Error;
 
@@ -55,7 +56,7 @@ pub fn calculate_benchmark(
     let mut attacker = build_pokemon(data, &benchmark.attacker)?;
     let mut defender = build_pokemon(data, &benchmark.defender)?;
     let mut move_ = data.move_data(&benchmark.move_name)?.to_damage_move()?;
-    move_.times_affected = benchmark.move_times_affected;
+    move_.set_effect_count(EffectCount::from(benchmark.move_times_affected));
     move_.is_critical = benchmark.critical;
     move_.targets_single_target =
         move_.targets_single_target || benchmark.attacker.move_targets_single_target;
