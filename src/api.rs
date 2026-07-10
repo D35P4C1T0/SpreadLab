@@ -488,6 +488,7 @@ impl FieldRequest {
                 light_screen: self.defender_light_screen,
                 aurora_veil: self.defender_aurora_veil,
                 friend_guard: self.defender_friend_guard,
+                ..SideConditions::default()
             },
             ..Field::default()
         };
