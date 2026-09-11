@@ -3,7 +3,7 @@
 SpreadLab is an alpha Pokemon Champions Stat Point optimizer for:
 
 ```text
-[Gen 9 Champions] VGC 2026 Reg M-B (Bo3)
+[Gen 9 Champions] VGC 2026 Reg M-C (Bo3)
 ```
 
 > Alpha status: interfaces, CLI output, public API structs, and optimizer reports may
@@ -15,11 +15,44 @@ SpreadLab is an alpha Pokemon Champions Stat Point optimizer for:
 Damage calculations are delegated to:
 
 ```toml
-damage_calc = { package = "pkmn-dmg-lib", git = "https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git", rev = "f415eb36b2899795e0908f9fb3ae1fae242a0968", features = ["serde"] }
+damage_calc = { package = "pkmn-dmg-lib", git = "https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git", rev = "b8df8c49122f0f6016ecd049efca1824d59effe4", features = ["serde"] }
 ```
 
 This project generates legal Champions SP spreads, parses sets, and builds
 damage inputs. It does not reimplement damage formulas.
+
+## Regulation M-C data and calculation scope
+
+CLI `list regulation` and API/WASM metadata expose M-C: 279 roster entries,
+including the 23 newly usable species (26 regular entries) and six Megas.
+The normalized species data also includes all four Squawkabilly plumages.
+The Rust API retains `regulation_m_b_names()` and adds `regulation_m_c_names()`.
+Items and typed item identities now come directly from the pinned damage library,
+including the 12 new held items, six Mega Stones, and corrected stone spellings.
+Showdown aliases such as `Persian-Alola`, `Indeedee-F`, `Toxtricity-Low-Key`,
+and `Lucario-Mega-Z` resolve to their source-data forms.
+
+Sources checked on 2026-09-11:
+
+- [Official M-C announcement](https://news.pokemon-home.com/en/page/816.html).
+- [Project Pokemon champout](https://github.com/projectpokemon/champout) for
+  species stats, types, weights, abilities, and moves. A fresh `personal.json`
+  download matched the pinned library's source manifest SHA-256:
+  `5ab5444e4e08cc692c1c309dc0c113e8ba63e23187f9f6331cc4505db3ab96a7`.
+- [Damage library data provenance and scope](https://github.com/D35P4C1T0/pkmn-dmg-lib-rs/blob/b8df8c49122f0f6016ecd049efca1824d59effe4/data/champions/README.md).
+
+All listed abilities parse, including Aura Guard, Emergency Exit, and Seed Sower.
+Grassy Surge and Psychic Surge have no typed ability variant upstream; they parse
+as `Ability::None`, with terrain supplied explicitly through `FieldRequest.terrain`
+(`"Grassy"` / `"Psychic"`) or the Rust benchmark field. Terrain is not inferred
+from set abilities. Supply the current battle state when using terrain Seeds.
+
+Damage and KO estimates follow the pinned library: Parental Bond uses a
+quarter-strength second hit, and KO projections do not model Focus Sash
+activation. The library models Aura Guard contact reduction, Air Balloon
+immunity, Normal Gem, and terrain Seeds. Leek's critical-hit chance, Rocky Helmet
+retaliation, switching items, trapping duration, and terrain duration are outside
+its single-attack calculation; critical hits and field state remain explicit inputs.
 
 ## Features
 
@@ -71,7 +104,7 @@ Use `wasm-bindgen` or `wasm-pack` to generate JavaScript glue for the browser.
 
 ## Local Damage Library Development
 
-This checkout patches the git dependency to the local dmg library checkout:
+To develop against a local damage library checkout, add this optional patch:
 
 ```toml
 [patch."https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git"]

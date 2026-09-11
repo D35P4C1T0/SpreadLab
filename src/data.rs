@@ -1,163 +1,15 @@
 use crate::showdown::parse_nature_name;
 use crate::stats::BaseStats;
 use damage_calc::data::champions::{
-    CHAMPIONS_ABILITIES, CHAMPIONS_SPECIES, REGULATION_M_B_POKEMON,
+    CHAMPIONS_ABILITIES, CHAMPIONS_ITEM_VALUES, CHAMPIONS_SPECIES, REGULATION_M_B_POKEMON,
+    REGULATION_M_C_POKEMON,
 };
 use damage_calc::{Ability, Category, Item, Move, PokemonType};
 use serde::Deserialize;
 use std::collections::HashMap;
 use thiserror::Error;
 
-pub const POKEMON_CHAMPIONS_ITEMS: &[&str] = &[
-    "Abomasite",
-    "Absolite",
-    "Aerodactylite",
-    "Aggronite",
-    "Alakazite",
-    "Altarianite",
-    "Ampharosite",
-    "Aspear Berry",
-    "Audinite",
-    "Babiri Berry",
-    "Banettite",
-    "Barbaracleite",
-    "Beedrillite",
-    "Big Root",
-    "Black Belt",
-    "Black Glasses",
-    "Blastoisinite",
-    "Blazikenite",
-    "BrightPowder",
-    "Cameruptite",
-    "Chandelurite",
-    "Charcoal",
-    "Charizardite X",
-    "Charizardite Y",
-    "Charti Berry",
-    "Cheri Berry",
-    "Chesnaughtite",
-    "Chesto Berry",
-    "Chilan Berry",
-    "Chimechite",
-    "Choice Scarf",
-    "Chople Berry",
-    "Clefablite",
-    "Coba Berry",
-    "Colbur Berry",
-    "Crabominite",
-    "Damp Rock",
-    "Delphoxite",
-    "Dragalgeite",
-    "Dragon Fang",
-    "Dragoninite",
-    "Drampanite",
-    "Eelektrossite",
-    "Emboarite",
-    "Excadrite",
-    "Expert Belt",
-    "Fairy Feather",
-    "Falinksite",
-    "Feraligite",
-    "Floettite",
-    "Focus Band",
-    "Focus Sash",
-    "Froslassite",
-    "Galladite",
-    "Garchompite",
-    "Gardevoirite",
-    "Gengarite",
-    "Glalitite",
-    "Glimmoranite",
-    "Golurkite",
-    "Greninjite",
-    "Gyaradosite",
-    "Haban Berry",
-    "Hard Stone",
-    "Hawluchanite",
-    "Heat Rock",
-    "Heracronite",
-    "Houndoominite",
-    "Icy Rock",
-    "Iron Ball",
-    "Kangaskhanite",
-    "Kasib Berry",
-    "Kebia Berry",
-    "King's Rock",
-    "Leftovers",
-    "Leppa Berry",
-    "Life Orb",
-    "Light Ball",
-    "Light Clay",
-    "Lopunnite",
-    "Lucarionite",
-    "Lum Berry",
-    "Magnet",
-    "Malamarite",
-    "Manectite",
-    "Mawileite",
-    "Medichamite",
-    "Meganiumite",
-    "Mental Herb",
-    "Meowsticite",
-    "Metagrossite",
-    "Metal Coat",
-    "Metronome",
-    "Miracle Seed",
-    "Muscle Band",
-    "Mystic Water",
-    "Never-Melt Ice",
-    "Occa Berry",
-    "Oran Berry",
-    "Passho Berry",
-    "Payapa Berry",
-    "Pecha Berry",
-    "Persim Berry",
-    "Pidgeotite",
-    "Pinsirite",
-    "Poison Barb",
-    "Pyroarite",
-    "Quick Claw",
-    "Raichunite X",
-    "Raichunite Y",
-    "Rawst Berry",
-    "Rindo Berry",
-    "Roseli Berry",
-    "Sablenite",
-    "Sceptileite",
-    "Scizorite",
-    "Scolipedeite",
-    "Scope Lens",
-    "Scovillainite",
-    "Scraftyite",
-    "Sharp Beak",
-    "Sharpedonite",
-    "Shed Shell",
-    "Shell Bell",
-    "Shuca Berry",
-    "Silk Scarf",
-    "SilverPowder",
-    "Sitrus Berry",
-    "Skarmorite",
-    "Slowbronite",
-    "Smooth Rock",
-    "Soft Sand",
-    "Spell Tag",
-    "Staraptorite",
-    "Starminite",
-    "Steelixite",
-    "Swampertite",
-    "Tanga Berry",
-    "TwistedSpoon",
-    "Tyranitarite",
-    "Venusaurite",
-    "Victreebelite",
-    "Wacan Berry",
-    "White Herb",
-    "Wide Lens",
-    "Wise Glasses",
-    "Yache Berry",
-    "Zoom Lens",
-];
+pub const POKEMON_CHAMPIONS_ITEMS: &[&str] = damage_calc::data::champions::CHAMPIONS_ITEMS;
 
 #[derive(Debug, Error)]
 pub enum DataError {
@@ -254,6 +106,19 @@ impl ChampionsData {
                         keys.push(normalize_name(&format!("{mega_suffix} Mega")));
                     }
                 }
+                let aliases: &[&str] = match species.display_name.as_str() {
+                    "Persian (Alolan)" => &["Persian-Alola"],
+                    "Toxtricity (Amped Form)" => &["Toxtricity", "Toxtricity-Amped"],
+                    "Toxtricity (Low Key Form)" => &["Toxtricity-Low-Key"],
+                    "Indeedee (Male)" => &["Indeedee", "Indeedee-M"],
+                    "Indeedee (Female)" => &["Indeedee-F"],
+                    "Squawkabilly (Green Plumage)" => &["Squawkabilly", "Squawkabilly-Green"],
+                    "Squawkabilly (Blue Plumage)" => &["Squawkabilly-Blue"],
+                    "Squawkabilly (Yellow Plumage)" => &["Squawkabilly-Yellow"],
+                    "Squawkabilly (White Plumage)" => &["Squawkabilly-White"],
+                    _ => &[],
+                };
+                keys.extend(aliases.iter().map(|name| normalize_name(name)));
                 keys.into_iter()
                     .map(move |key| (key, species.clone()))
                     .collect::<Vec<_>>()
@@ -289,6 +154,10 @@ impl ChampionsData {
 
     pub fn regulation_m_b_names(&self) -> impl Iterator<Item = &'static str> {
         REGULATION_M_B_POKEMON.iter().copied()
+    }
+
+    pub fn regulation_m_c_names(&self) -> impl Iterator<Item = &'static str> {
+        REGULATION_M_C_POKEMON.iter().copied()
     }
 
     pub fn item_names(&self) -> impl Iterator<Item = &'static str> {
@@ -543,12 +412,119 @@ pub fn parse_ability(raw: &str) -> Result<Ability, DataError> {
         "windrider" => Ability::WindRider,
         "wonderguard" => Ability::WonderGuard,
         "whitesmoke" => Ability::WhiteSmoke,
+        "aromaveil" => Ability::AromaVeil,
+        "battlearmor" => Ability::BattleArmor,
+        "chlorophyll" => Ability::Chlorophyll,
+        "drought" => Ability::Drought,
+        "drizzle" => Ability::Drizzle,
+        "merciless" => Ability::Merciless,
+        "quickfeet" => Ability::QuickFeet,
+        "sandrush" => Ability::SandRush,
+        "sandstream" => Ability::SandStream,
+        "screencleaner" => Ability::ScreenCleaner,
+        "shellarmor" => Ability::ShellArmor,
+        "slushrush" => Ability::SlushRush,
+        "snowwarning" => Ability::SnowWarning,
+        "stalwart" => Ability::Stalwart,
+        "surgesurfer" => Ability::SurgeSurfer,
+        "stench" => Ability::Stench,
+        "speedboost" => Ability::SpeedBoost,
+        "limber" => Ability::Limber,
+        "sandveil" => Ability::SandVeil,
+        "static" => Ability::Static,
+        "compoundeyes" => Ability::CompoundEyes,
+        "insomnia" => Ability::Insomnia,
+        "immunity" => Ability::Immunity,
+        "shielddust" => Ability::ShieldDust,
+        "suctioncups" => Ability::SuctionCups,
+        "shadowtag" => Ability::ShadowTag,
+        "roughskin" => Ability::RoughSkin,
+        "synchronize" => Ability::Synchronize,
+        "naturalcure" => Ability::NaturalCure,
+        "illuminate" => Ability::Illuminate,
+        "poisonpoint" => Ability::PoisonPoint,
+        "magmaarmor" => Ability::MagmaArmor,
+        "raindish" => Ability::RainDish,
+        "pressure" => Ability::Pressure,
+        "earlybird" => Ability::EarlyBird,
+        "flamebody" => Ability::FlameBody,
+        "keeneye" => Ability::KeenEye,
+        "pickup" => Ability::Pickup,
+        "cutecharm" => Ability::CuteCharm,
+        "stickyhold" => Ability::StickyHold,
+        "shedskin" => Ability::ShedSkin,
+        "rockhead" => Ability::RockHead,
+        "vitalspirit" => Ability::VitalSpirit,
+        "tangledfeet" => Ability::TangledFeet,
+        "steadfast" => Ability::Steadfast,
+        "snowcloak" => Ability::SnowCloak,
+        "gluttony" => Ability::Gluttony,
+        "angerpoint" => Ability::AngerPoint,
+        "poisonheal" => Ability::PoisonHeal,
+        "hydration" => Ability::Hydration,
+        "noguard" => Ability::NoGuard,
+        "stall" => Ability::Stall,
+        "superluck" => Ability::SuperLuck,
+        "aftermath" => Ability::Aftermath,
+        "anticipation" => Ability::Anticipation,
+        "icebody" => Ability::IceBody,
+        "frisk" => Ability::Frisk,
+        "pickpocket" => Ability::Pickpocket,
+        "cursedbody" => Ability::CursedBody,
+        "healer" => Ability::Healer,
+        "harvest" => Ability::Harvest,
+        "telepathy" => Ability::Telepathy,
+        "moody" => Ability::Moody,
+        "overcoat" => Ability::Overcoat,
+        "poisontouch" => Ability::PoisonTouch,
+        "regenerator" => Ability::Regenerator,
+        "bigpecks" => Ability::BigPecks,
+        "illusion" => Ability::Illusion,
+        "imposter" => Ability::Imposter,
+        "mummy" => Ability::Mummy,
+        "moxie" => Ability::Moxie,
+        "justified" => Ability::Justified,
+        "magicbounce" => Ability::MagicBounce,
+        "prankster" => Ability::Prankster,
+        "cheekpouch" => Ability::CheekPouch,
+        "magician" => Ability::Magician,
+        "sweetveil" => Ability::SweetVeil,
+        "stancechange" => Ability::StanceChange,
+        "galewings" => Ability::GaleWings,
+        "symbiosis" => Ability::Symbiosis,
+        "berserk" => Ability::Berserk,
+        "corrosion" => Ability::Corrosion,
+        "innardsout" => Ability::InnardsOut,
+        "receiver" => Ability::Receiver,
+        "wanderingspirit" => Ability::WanderingSpirit,
+        "hungerswitch" => Ability::HungerSwitch,
+        "quickdraw" => Ability::QuickDraw,
+        "curiousmedicine" => Ability::CuriousMedicine,
+        "zerotohero" => Ability::ZeroToHero,
+        "opportunist" => Ability::Opportunist,
+        "cudchew" => Ability::CudChew,
+        "toxicdebris" => Ability::ToxicDebris,
+        "hospitality" => Ability::Hospitality,
+        "auraguard" => Ability::AuraGuard,
+        // Terrain setters are represented by explicit Field terrain in the damage library.
+        "psychicsurge" | "grassysurge" => Ability::None,
+        "liquidooze" => Ability::LiquidOoze,
+        "runaway" => Ability::RunAway,
+        "emergencyexit" => Ability::EmergencyExit,
+        "seedsower" => Ability::SeedSower,
         _ => return Err(DataError::UnknownAbility(raw.to_owned())),
     })
 }
 
 pub fn parse_item(raw: &str) -> Result<Item, DataError> {
-    Ok(match normalize_name(raw).as_str() {
+    let key = normalize_name(raw);
+    if let Some((_, item)) = CHAMPIONS_ITEM_VALUES
+        .iter()
+        .find(|(name, _)| normalize_name(name) == key)
+    {
+        return Ok(*item);
+    }
+    Ok(match key.as_str() {
         "" | "none" | "nothing" => Item::None,
         "abilityshield" => Item::AbilityShield,
         "adrenalineorb" => Item::AdrenalineOrb,
@@ -874,6 +850,109 @@ mod tests {
     }
 
     #[test]
+    fn exposes_and_resolves_regulation_m_c_additions() {
+        let data = ChampionsData::load().unwrap();
+        assert_eq!(data.regulation_m_c_names().count(), 279);
+        for name in [
+            "Wigglytuff",
+            "Persian",
+            "Persian (Alolan)",
+            "Farfetch’d",
+            "Mr. Mime",
+            "Swalot",
+            "Salamence",
+            "Gogoat",
+            "Golisopod",
+            "Rillaboom",
+            "Cinderace",
+            "Inteleon",
+            "Thievul",
+            "Toxtricity (Amped Form)",
+            "Toxtricity (Low Key Form)",
+            "Grapploct",
+            "Perrserker",
+            "Sirfetch’d",
+            "Pincurchin",
+            "Indeedee (Male)",
+            "Indeedee (Female)",
+            "Pawmot",
+            "Arboliva",
+            "Mabosstiff",
+            "Baxcalibur",
+            "Squawkabilly",
+            "Mega Absol Z",
+            "Mega Salamence",
+            "Mega Garchomp Z",
+            "Mega Lucario Z",
+            "Mega Golisopod",
+            "Mega Baxcalibur",
+        ] {
+            assert!(
+                data.regulation_m_c_names().any(|entry| entry == name),
+                "{name}"
+            );
+            data.species(name)
+                .unwrap_or_else(|err| panic!("{name}: {err}"));
+        }
+        for (alias, canonical) in [
+            ("Persian-Alola", "Persian (Alolan)"),
+            ("Toxtricity", "Toxtricity (Amped Form)"),
+            ("Toxtricity-Amped", "Toxtricity (Amped Form)"),
+            ("Toxtricity-Low-Key", "Toxtricity (Low Key Form)"),
+            ("Indeedee", "Indeedee (Male)"),
+            ("Indeedee-M", "Indeedee (Male)"),
+            ("Indeedee-F", "Indeedee (Female)"),
+            ("Squawkabilly", "Squawkabilly (Green Plumage)"),
+            ("Squawkabilly-Green", "Squawkabilly (Green Plumage)"),
+            ("Squawkabilly-Blue", "Squawkabilly (Blue Plumage)"),
+            ("Squawkabilly-Yellow", "Squawkabilly (Yellow Plumage)"),
+            ("Squawkabilly-White", "Squawkabilly (White Plumage)"),
+            ("Absol-Mega-Z", "Mega Absol Z"),
+            ("Salamence-Mega", "Mega Salamence"),
+            ("Garchomp-Mega-Z", "Mega Garchomp Z"),
+            ("Lucario-Mega-Z", "Mega Lucario Z"),
+            ("Golisopod-Mega", "Mega Golisopod"),
+            ("Baxcalibur-Mega", "Mega Baxcalibur"),
+        ] {
+            assert_eq!(data.species(alias).unwrap().display_name, canonical);
+        }
+        let lucario = data.species("Lucario-Mega-Z").unwrap();
+        assert_eq!(lucario.base_stats.special_attack, 164);
+        assert_eq!(lucario.base_stats.speed, 151);
+        assert_eq!(parse_ability("Aura Guard").unwrap(), Ability::AuraGuard);
+    }
+
+    #[test]
+    fn resolves_all_current_abilities_and_items() {
+        let data = ChampionsData::load().unwrap();
+        for name in data.ability_names() {
+            parse_ability(name).unwrap_or_else(|err| panic!("{name}: {err}"));
+        }
+        for (name, expected) in CHAMPIONS_ITEM_VALUES {
+            assert_eq!(parse_item(name).unwrap(), *expected, "{name}");
+        }
+        for (name, expected) in [
+            ("Leek", Item::Leek),
+            ("Rocky Helmet", Item::RockyHelmet),
+            ("Air Balloon", Item::AirBalloon),
+            ("Red Card", Item::RedCard),
+            ("Binding Band", Item::BindingBand),
+            ("Eject Button", Item::EjectButton),
+            ("Normal Gem", Item::NormalGem),
+            ("Terrain Extender", Item::TerrainExtender),
+            ("Electric Seed", Item::ElectricSeed),
+            ("Psychic Seed", Item::PsychicSeed),
+            ("Misty Seed", Item::MistySeed),
+            ("Grassy Seed", Item::GrassySeed),
+        ] {
+            assert!(data.item_names().any(|entry| entry == name), "{name}");
+            assert_eq!(parse_item(name).unwrap(), expected);
+        }
+        assert!(parse_ability("Not An Ability").is_err());
+        assert!(parse_item("Not An Item").is_err());
+    }
+
+    #[test]
     fn parses_spread_key() {
         let (nature, points) = parse_spread_key("Jolly:0/32/2/0/0/32").unwrap();
         assert_eq!(nature, damage_calc::Nature::Jolly);
@@ -904,7 +983,7 @@ mod tests {
         assert_eq!(parse_item("choicescarf").unwrap(), Item::ChoiceScarf);
         assert_eq!(parse_item("Focus Sash").unwrap(), Item::FocusSash);
         assert_eq!(parse_item("Leftovers").unwrap(), Item::Leftovers);
-        assert_eq!(parse_item("White Herb").unwrap(), Item::None);
+        assert_eq!(parse_item("White Herb").unwrap(), Item::WhiteHerb);
         assert_eq!(parse_item("nothing").unwrap(), Item::None);
         for item in POKEMON_CHAMPIONS_ITEMS {
             parse_item(item).unwrap_or_else(|err| panic!("{item} failed to parse: {err}"));
