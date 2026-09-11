@@ -27,11 +27,11 @@ jobs:
       - name: Check default features
         run: cargo check --locked
 
-      - name: Check WebUI feature
-        run: cargo check --locked --features webui
+      - name: Check all features
+        run: cargo check --locked --all-features
 
       - name: Clippy
-        run: cargo clippy --locked --all-targets --features webui -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Test
-        run: cargo test --locked --features webui
+        run: cargo test --locked --all-features

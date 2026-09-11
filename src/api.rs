@@ -217,7 +217,7 @@ pub fn load_metadata() -> Result<MetadataResponse, ApiError> {
     let data = ChampionsData::load()?;
     let mut response = MetadataResponse {
         species: data.species_names().map(str::to_owned).collect(),
-        regulation: data.regulation_m_b_names().map(str::to_owned).collect(),
+        regulation: data.regulation_m_c_names().map(str::to_owned).collect(),
         items: data.item_names().map(str::to_owned).collect(),
         abilities: data.ability_names().map(str::to_owned).collect(),
         moves: data.move_names().map(str::to_owned).collect(),
@@ -693,7 +693,44 @@ mod tests {
     }
 
     #[test]
-    fn focus_sash_counts_in_min_survival_search() {
+    fn m_c_metadata_and_damage_inputs_reach_updated_library() {
+        let metadata = load_metadata().unwrap();
+        assert_eq!(metadata.regulation.len(), 279);
+        assert!(metadata.species.iter().any(|name| name == "Mega Lucario Z"));
+        assert!(metadata.items.iter().any(|name| name == "Leek"));
+        assert!(metadata.abilities.iter().any(|name| name == "Aura Guard"));
+
+        let calculate = |attacker: &str, defender: &str, move_name: &str| {
+            calculate_damage_request(DamageRequest {
+                attacker_set: attacker.to_owned(),
+                defender_set: defender.to_owned(),
+                move_name: move_name.to_owned(),
+                move_times_affected: 0,
+                critical: false,
+                field: None,
+            })
+            .unwrap()
+        };
+        let balloon = calculate("Garchomp", "Pawmot @ Air Balloon", "Earthquake");
+        let grounded = calculate("Garchomp", "Pawmot", "Earthquake");
+        assert_eq!(balloon.summary.max_damage, 0);
+        assert!(grounded.summary.min_damage > 0);
+
+        let guarded = calculate(
+            "Perrserker\nAbility: Tough Claws",
+            "Lucario-Mega-Z @ Lucarionite Z\nAbility: Aura Guard",
+            "Close Combat",
+        );
+        let unguarded = calculate(
+            "Perrserker\nAbility: Tough Claws",
+            "Lucario-Mega-Z @ Lucarionite Z\nAbility: None",
+            "Close Combat",
+        );
+        assert!(guarded.summary.max_damage < unguarded.summary.max_damage);
+    }
+
+    #[test]
+    fn focus_sash_uses_library_reference_ko_projection() {
         let data = ChampionsData::load().unwrap();
         let response = find_min_hp_def_survival_with_data(
             &data,
@@ -715,9 +752,9 @@ mod tests {
         )
         .unwrap();
 
-        let best = response.best.expect("Focus Sash should prevent full-HP KO");
-        assert_eq!(best.total_points, 0);
-        assert_eq!(best.result.ko_chance, Some(0.0));
+        // Upstream reference KO projection does not model Focus Sash activation.
+        assert!(response.best.is_none());
+        assert!(response.matches.is_empty());
     }
 
     #[test]
@@ -978,11 +1015,12 @@ mod tests {
                 defender: "Blastoise\n- Protect",
                 move_name: "Double-Edge",
                 field: None,
-                expected_min: 123,
-                expected_max: 145,
+                // Upstream now applies the quarter-strength Parental Bond child hit.
+                expected_min: 101,
+                expected_max: 121,
                 expected_unique: &[
-                    123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136,
-                    137, 138, 139, 140, 141, 142, 143, 144, 145,
+                    101, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114,
+                    115, 116, 117, 118, 119, 120, 121,
                 ],
                 expected_roll_count: Some(256),
             },
