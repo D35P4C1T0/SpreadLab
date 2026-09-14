@@ -91,7 +91,12 @@ pub fn parse_set(text: &str) -> Result<ParsedSet, ShowdownError> {
         .or(nature_hint)
         .unwrap_or(Nature::Hardy);
     let status = parse_status(&normalized);
-    let ability_on = parse_bool_line(&normalized, "Ability On:").unwrap_or(false);
+    let ability_on = parse_bool_line(&normalized, "Ability On:").unwrap_or_else(|| {
+        ability
+            .as_deref()
+            .and_then(|name| crate::data::parse_ability(name).ok())
+            .is_some_and(damage_calc::Ability::is_on_by_default)
+    });
     let supreme_overlord_allies = parse_u8_line(&normalized, "Supreme Overlord Allies:")
         .or_else(|| parse_u8_line(&normalized, "Fainted Allies:"))
         .unwrap_or(0);
@@ -421,6 +426,30 @@ fn normalize_key(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ability_toggle_defaults_follow_upstream_and_allow_overrides() {
+        assert!(
+            parse_set("Salamence\nAbility: Intimidate")
+                .unwrap()
+                .ability_on
+        );
+        assert!(
+            !parse_set("Salamence\nAbility: Intimidate\nAbility On: false")
+                .unwrap()
+                .ability_on
+        );
+        assert!(
+            !parse_set("Charizard\nAbility: Flash Fire")
+                .unwrap()
+                .ability_on
+        );
+        assert!(
+            parse_set("Charizard\nAbility: Flash Fire\nAbility On: true")
+                .unwrap()
+                .ability_on
+        );
+    }
 
     #[test]
     fn converts_evs_to_sps() {

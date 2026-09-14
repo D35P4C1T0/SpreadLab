@@ -3,7 +3,7 @@
 SpreadLab is an alpha Pokemon Champions Stat Point optimizer for:
 
 ```text
-[Gen 9 Champions] VGC 2026 Reg M-B (Bo3)
+[Gen 9 Champions] VGC 2026 Reg M-C (Bo3)
 ```
 
 > Alpha status: interfaces, CLI output, public API structs, and optimizer reports may
@@ -15,7 +15,7 @@ SpreadLab is an alpha Pokemon Champions Stat Point optimizer for:
 Damage calculations are delegated to:
 
 ```toml
-damage_calc = { package = "pkmn-dmg-lib", git = "https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git", rev = "f415eb36b2899795e0908f9fb3ae1fae242a0968", features = ["serde"] }
+damage_calc = { package = "pkmn-dmg-lib", git = "https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git", rev = "96f55ef04e66d882457af4f009f228de0e73afdc", features = ["serde"] }
 ```
 
 This project generates legal Champions SP spreads, parses sets, and builds
@@ -61,6 +61,7 @@ The wasm module exports JSON-string functions for browser callers:
 
 - `loadMetadata()`
 - `calculateDamage(requestJson)`
+- `calculateAllMoves(requestJson)`
 - `findMinHpDefSurvival(requestJson)`
 - `findMinCombinedHpDefSurvival(requestJson)`
 - `findMinOffensiveKo(requestJson)`
@@ -69,9 +70,39 @@ The wasm module exports JSON-string functions for browser callers:
 
 Use `wasm-bindgen` or `wasm-pack` to generate JavaScript glue for the browser.
 
+## Damage library update (Reg M-C)
+
+The pinned revision is `96f55ef04e66d882457af4f009f228de0e73afdc`.
+Metadata and `list regulation` now use Regulation M-C. The Rust
+`regulation_m_b_names()` method remains available for older consumers.
+Move flags, fixed hit counts, and automatic critical hits come from upstream's
+typed move metadata. Item and ability names resolve through upstream tables;
+explicit `Ability On:` lines override the upstream default toggle state.
+
+`DamageResponse` now includes `outcome`, `resolved_move`, `defender_hp_delta`,
+`attacker_hp_effects`, and `ko_chance_by_move_use`. Signed HP effects use positive
+values for damage and negative values for healing; attacker effects are partial
+components, not total recoil/drain predictions.
+
+`calculate_all_moves_request(AllMovesRequest)` (WASM: `calculateAllMoves`) accepts
+`left_set`, `right_set`, four names each in `left_moves` and `right_moves`, and
+optional `left_to_right_field` / `right_to_left_field`. It returns upstream's
+`BatchDamageResult`, including both resulting Pokemon states. Initial boosts
+come from the attacker/defender boosts in `left_to_right_field`.
+
+`FieldRequest` additionally accepts `defender_stealth_rock`, `defender_spikes`
+(clamped to 0–3), `defender_salt_cure`, `defender_aqua_ring`, `ingrain`,
+`defender_nightmare`, `defender_curse`, `defender_binding`, and
+`defender_sea_of_fire`. All default to false/zero.
+
+Upstream's revised cumulative KO projection changes berry odds and does not
+apply Focus Sash survival. Single-benchmark searches follow that projection.
+The separate multi-attacker sequence search retains its existing turn-state
+model (including Focus Sash); it is not an upstream full battle simulation.
+
 ## Local Damage Library Development
 
-This checkout patches the git dependency to the local dmg library checkout:
+To test against a local dmg library checkout, add this optional patch:
 
 ```toml
 [patch."https://github.com/D35P4C1T0/pkmn-dmg-lib-rs.git"]

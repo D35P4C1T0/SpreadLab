@@ -1,163 +1,16 @@
 use crate::showdown::parse_nature_name;
 use crate::stats::BaseStats;
 use damage_calc::data::champions::{
-    CHAMPIONS_ABILITIES, CHAMPIONS_SPECIES, REGULATION_M_B_POKEMON,
+    champions_reference_move, CHAMPIONS_ABILITIES, CHAMPIONS_ITEM_VALUES,
+    CHAMPIONS_REFERENCE_ABILITY_VALUES, CHAMPIONS_SPECIES, REGULATION_M_B_POKEMON,
+    REGULATION_M_C_POKEMON,
 };
 use damage_calc::{Ability, Category, Item, Move, PokemonType};
 use serde::Deserialize;
 use std::collections::HashMap;
 use thiserror::Error;
 
-pub const POKEMON_CHAMPIONS_ITEMS: &[&str] = &[
-    "Abomasite",
-    "Absolite",
-    "Aerodactylite",
-    "Aggronite",
-    "Alakazite",
-    "Altarianite",
-    "Ampharosite",
-    "Aspear Berry",
-    "Audinite",
-    "Babiri Berry",
-    "Banettite",
-    "Barbaracleite",
-    "Beedrillite",
-    "Big Root",
-    "Black Belt",
-    "Black Glasses",
-    "Blastoisinite",
-    "Blazikenite",
-    "BrightPowder",
-    "Cameruptite",
-    "Chandelurite",
-    "Charcoal",
-    "Charizardite X",
-    "Charizardite Y",
-    "Charti Berry",
-    "Cheri Berry",
-    "Chesnaughtite",
-    "Chesto Berry",
-    "Chilan Berry",
-    "Chimechite",
-    "Choice Scarf",
-    "Chople Berry",
-    "Clefablite",
-    "Coba Berry",
-    "Colbur Berry",
-    "Crabominite",
-    "Damp Rock",
-    "Delphoxite",
-    "Dragalgeite",
-    "Dragon Fang",
-    "Dragoninite",
-    "Drampanite",
-    "Eelektrossite",
-    "Emboarite",
-    "Excadrite",
-    "Expert Belt",
-    "Fairy Feather",
-    "Falinksite",
-    "Feraligite",
-    "Floettite",
-    "Focus Band",
-    "Focus Sash",
-    "Froslassite",
-    "Galladite",
-    "Garchompite",
-    "Gardevoirite",
-    "Gengarite",
-    "Glalitite",
-    "Glimmoranite",
-    "Golurkite",
-    "Greninjite",
-    "Gyaradosite",
-    "Haban Berry",
-    "Hard Stone",
-    "Hawluchanite",
-    "Heat Rock",
-    "Heracronite",
-    "Houndoominite",
-    "Icy Rock",
-    "Iron Ball",
-    "Kangaskhanite",
-    "Kasib Berry",
-    "Kebia Berry",
-    "King's Rock",
-    "Leftovers",
-    "Leppa Berry",
-    "Life Orb",
-    "Light Ball",
-    "Light Clay",
-    "Lopunnite",
-    "Lucarionite",
-    "Lum Berry",
-    "Magnet",
-    "Malamarite",
-    "Manectite",
-    "Mawileite",
-    "Medichamite",
-    "Meganiumite",
-    "Mental Herb",
-    "Meowsticite",
-    "Metagrossite",
-    "Metal Coat",
-    "Metronome",
-    "Miracle Seed",
-    "Muscle Band",
-    "Mystic Water",
-    "Never-Melt Ice",
-    "Occa Berry",
-    "Oran Berry",
-    "Passho Berry",
-    "Payapa Berry",
-    "Pecha Berry",
-    "Persim Berry",
-    "Pidgeotite",
-    "Pinsirite",
-    "Poison Barb",
-    "Pyroarite",
-    "Quick Claw",
-    "Raichunite X",
-    "Raichunite Y",
-    "Rawst Berry",
-    "Rindo Berry",
-    "Roseli Berry",
-    "Sablenite",
-    "Sceptileite",
-    "Scizorite",
-    "Scolipedeite",
-    "Scope Lens",
-    "Scovillainite",
-    "Scraftyite",
-    "Sharp Beak",
-    "Sharpedonite",
-    "Shed Shell",
-    "Shell Bell",
-    "Shuca Berry",
-    "Silk Scarf",
-    "SilverPowder",
-    "Sitrus Berry",
-    "Skarmorite",
-    "Slowbronite",
-    "Smooth Rock",
-    "Soft Sand",
-    "Spell Tag",
-    "Staraptorite",
-    "Starminite",
-    "Steelixite",
-    "Swampertite",
-    "Tanga Berry",
-    "TwistedSpoon",
-    "Tyranitarite",
-    "Venusaurite",
-    "Victreebelite",
-    "Wacan Berry",
-    "White Herb",
-    "Wide Lens",
-    "Wise Glasses",
-    "Yache Berry",
-    "Zoom Lens",
-];
+pub use damage_calc::data::champions::CHAMPIONS_ITEMS as POKEMON_CHAMPIONS_ITEMS;
 
 #[derive(Debug, Error)]
 pub enum DataError {
@@ -235,7 +88,7 @@ impl ChampionsData {
     pub fn load() -> Result<Self, DataError> {
         let parsed: ChampionsDataJson =
             serde_json::from_str(damage_calc::data::CHAMPIONS_DATA_JSON)?;
-        let species_by_key = parsed
+        let mut species_by_key: HashMap<String, SpeciesData> = parsed
             .species
             .into_iter()
             .flat_map(|species| {
@@ -259,12 +112,56 @@ impl ChampionsData {
                     .collect::<Vec<_>>()
             })
             .collect();
-        let moves_by_key = parsed
+        for species in damage_calc::data::champions::CHAMPIONS_REFERENCE_SPECIES {
+            species_by_key
+                .entry(normalize_name(species.name))
+                .or_insert_with(|| SpeciesData {
+                    display_name: species.name.into(),
+                    types: species
+                        .types
+                        .iter()
+                        .flatten()
+                        .map(ToString::to_string)
+                        .collect(),
+                    base_stats: BaseStatsJson {
+                        hp: species.base_stats.hp,
+                        attack: species.base_stats.attack,
+                        defense: species.base_stats.defense,
+                        special_attack: species.base_stats.special_attack,
+                        special_defense: species.base_stats.special_defense,
+                        speed: species.base_stats.speed,
+                    },
+                    weight_kg: species.weight_kg,
+                });
+        }
+        for (alias, canonical) in [
+            ("Floette", "Floette (Eternal Flower)"),
+            ("Gourgeist", "Gourgeist (Medium Variety)"),
+            ("Lycanroc", "Lycanroc (Midday Form)"),
+        ] {
+            if let Some(species) = species_by_key.get(&normalize_name(canonical)).cloned() {
+                species_by_key.insert(normalize_name(alias), species);
+            }
+        }
+        let mut moves_by_key: HashMap<String, MoveData> = parsed
             .moves
             .into_iter()
             .map(|move_| (normalize_name(&move_.name), move_))
             .collect();
 
+        for move_ in damage_calc::data::champions::CHAMPIONS_REFERENCE_MOVES {
+            moves_by_key.insert(
+                normalize_name(move_.name),
+                MoveData {
+                    name: move_.name.into(),
+                    type_name: move_.type_.to_string(),
+                    category: format!("{:?}", move_.category),
+                    power: move_.base_power,
+                    makes_contact: move_.makes_contact,
+                    priority: i8::from(move_.is_priority),
+                },
+            );
+        }
         Ok(Self {
             species_by_key,
             moves_by_key,
@@ -289,6 +186,10 @@ impl ChampionsData {
 
     pub fn regulation_m_b_names(&self) -> impl Iterator<Item = &'static str> {
         REGULATION_M_B_POKEMON.iter().copied()
+    }
+
+    pub fn regulation_m_c_names(&self) -> impl Iterator<Item = &'static str> {
+        REGULATION_M_C_POKEMON.iter().copied()
     }
 
     pub fn item_names(&self) -> impl Iterator<Item = &'static str> {
@@ -333,6 +234,9 @@ impl SpeciesData {
 
 impl MoveData {
     pub fn to_damage_move(&self) -> Result<Move, DataError> {
+        if let Some(metadata) = champions_reference_move(&self.name) {
+            return Ok(metadata.move_());
+        }
         let mut move_ = Move::new(
             self.name.clone(),
             self.power,
@@ -381,6 +285,13 @@ pub fn parse_category(raw: &str) -> Result<Category, DataError> {
 }
 
 pub fn parse_ability(raw: &str) -> Result<Ability, DataError> {
+    let key = normalize_name(raw);
+    if let Some((_, value)) = CHAMPIONS_REFERENCE_ABILITY_VALUES
+        .iter()
+        .find(|(name, _)| normalize_name(name) == key)
+    {
+        return Ok(*value);
+    }
     Ok(match normalize_name(raw).as_str() {
         "" | "none" | "nothing" => Ability::None,
         "adaptability" => Ability::Adaptability,
@@ -548,12 +459,20 @@ pub fn parse_ability(raw: &str) -> Result<Ability, DataError> {
 }
 
 pub fn parse_item(raw: &str) -> Result<Item, DataError> {
+    let key = normalize_name(raw);
+    if let Some((_, value)) = CHAMPIONS_ITEM_VALUES
+        .iter()
+        .find(|(name, _)| normalize_name(name) == key)
+    {
+        return Ok(*value);
+    }
     Ok(match normalize_name(raw).as_str() {
         "" | "none" | "nothing" => Item::None,
         "abilityshield" => Item::AbilityShield,
         "adrenalineorb" => Item::AdrenalineOrb,
         "assaultvest" => Item::AssaultVest,
         "airballoon" => Item::AirBalloon,
+        "stickybarb" => Item::StickyBarb,
         "choiceband" => Item::ChoiceBand,
         "choicescarf" => Item::ChoiceScarf,
         "choicespecs" => Item::ChoiceSpecs,
@@ -619,7 +538,7 @@ pub fn parse_item(raw: &str) -> Result<Item, DataError> {
         "fairyfeather" => Item::FairyFeather,
         "abomasite" => Item::None,
         "aggronite" => Item::None,
-        "barbaracleite" => Item::None,
+        "barbaracleite" => Item::Barbaracite,
         "beedrillite" => Item::None,
         "bigroot" => Item::None,
         "brightpowder" => Item::None,
@@ -667,7 +586,7 @@ pub fn parse_item(raw: &str) -> Result<Item, DataError> {
         "chandelurite" => Item::Chandelurite,
         "damprock" => Item::None,
         "delphoxite" => Item::None,
-        "dragalgeite" => Item::None,
+        "dragalgeite" => Item::Dragalgite,
         "eelektrossite" => Item::None,
         "falinksite" => Item::None,
         "floettite" => Item::None,
@@ -685,7 +604,7 @@ pub fn parse_item(raw: &str) -> Result<Item, DataError> {
         "lightclay" => Item::None,
         "malamarite" => Item::None,
         "manectite" => Item::None,
-        "mawileite" => Item::None,
+        "mawileite" => Item::Mawilite,
         "metagrossite" => Item::None,
         "metronome" => Item::None,
         "crabominite" => Item::Crabominite,
@@ -693,12 +612,12 @@ pub fn parse_item(raw: &str) -> Result<Item, DataError> {
         "quickclaw" => Item::None,
         "raichunitex" => Item::None,
         "raichunitey" => Item::None,
-        "sceptileite" => Item::None,
-        "scolipedeite" => Item::None,
-        "scraftyite" => Item::None,
+        "sceptileite" => Item::Sceptilite,
+        "scolipedeite" => Item::Scolipite,
+        "scraftyite" => Item::Scraftinite,
         "shedshell" => Item::None,
         "smoothrock" => Item::None,
-        "staraptorite" => Item::None,
+        "staraptorite" => Item::Staraptite,
         "steelixite" => Item::None,
         "swampertite" => Item::None,
         "drampanite" => Item::Drampanite,
@@ -852,6 +771,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn current_metadata_and_typed_resolvers_follow_upstream() {
+        let data = ChampionsData::load().unwrap();
+        assert!(data.regulation_m_c_names().count() > data.regulation_m_b_names().count());
+        for name in data.regulation_m_c_names() {
+            data.species(name).unwrap();
+        }
+        for &(name, expected) in CHAMPIONS_ITEM_VALUES {
+            assert_eq!(parse_item(name).unwrap(), expected, "{name}");
+        }
+        for &(name, expected) in CHAMPIONS_REFERENCE_ABILITY_VALUES {
+            assert_eq!(parse_ability(name).unwrap(), expected, "{name}");
+        }
+        let double_shock = data
+            .move_data("Double Shock")
+            .unwrap()
+            .to_damage_move()
+            .unwrap();
+        assert_eq!(double_shock.hits, 1);
+        let strikes = data
+            .move_data("Frost Breath")
+            .unwrap()
+            .to_damage_move()
+            .unwrap();
+        assert!(strikes.is_critical);
+        assert_eq!(strikes.hits, 1);
+        assert!(
+            data.move_data("Leaf Blade")
+                .unwrap()
+                .to_damage_move()
+                .unwrap()
+                .is_slice
+        );
+    }
+
+    #[test]
     fn loads_champions_data() {
         let data = ChampionsData::load().unwrap();
         let venusaur = data.species("Venusaur").unwrap();
@@ -904,7 +858,7 @@ mod tests {
         assert_eq!(parse_item("choicescarf").unwrap(), Item::ChoiceScarf);
         assert_eq!(parse_item("Focus Sash").unwrap(), Item::FocusSash);
         assert_eq!(parse_item("Leftovers").unwrap(), Item::Leftovers);
-        assert_eq!(parse_item("White Herb").unwrap(), Item::None);
+        assert_eq!(parse_item("White Herb").unwrap(), Item::WhiteHerb);
         assert_eq!(parse_item("nothing").unwrap(), Item::None);
         for item in POKEMON_CHAMPIONS_ITEMS {
             parse_item(item).unwrap_or_else(|err| panic!("{item} failed to parse: {err}"));

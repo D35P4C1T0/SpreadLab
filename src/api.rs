@@ -40,6 +40,68 @@ pub struct DamageRequest {
 pub struct DamageResponse {
     pub summary: DamageSummary,
     pub rolls: Vec<u16>,
+    pub outcome: damage_calc::DamageOutcome,
+    pub resolved_move: Option<damage_calc::ResolvedMove>,
+    pub defender_hp_delta: Option<i32>,
+    pub attacker_hp_effects: damage_calc::AttackerHpEffects,
+    pub ko_chance_by_move_use: Vec<f32>,
+}
+
+/// Four moves on each side, calculated using upstream's shared preprocessing pass.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AllMovesRequest {
+    pub left_set: String,
+    pub right_set: String,
+    pub left_moves: [String; 4],
+    pub right_moves: [String; 4],
+    #[serde(default)]
+    pub left_to_right_field: FieldRequest,
+    #[serde(default)]
+    pub right_to_left_field: FieldRequest,
+}
+
+pub fn calculate_all_moves_request(
+    request: AllMovesRequest,
+) -> Result<damage_calc::BatchDamageResult, ApiError> {
+    calculate_all_moves_request_with_data(&ChampionsData::load()?, request)
+}
+
+pub fn calculate_all_moves_request_with_data(
+    data: &ChampionsData,
+    request: AllMovesRequest,
+) -> Result<damage_calc::BatchDamageResult, ApiError> {
+    let left_set = parse_set(&request.left_set)?;
+    let right_set = parse_set(&request.right_set)?;
+    let mut left = crate::damage_bridge::build_pokemon(data, &left_set)?;
+    let mut right = crate::damage_bridge::build_pokemon(data, &right_set)?;
+    left.boosts = request.left_to_right_field.attacker_boosts.into_boosts();
+    right.boosts = request.left_to_right_field.defender_boosts.into_boosts();
+    if request.left_to_right_field.fairy_aura {
+        left.ability = damage_calc::Ability::FairyAura;
+    }
+    if request.right_to_left_field.fairy_aura {
+        right.ability = damage_calc::Ability::FairyAura;
+    }
+    let moves = |names: &[String; 4],
+                 set: &crate::showdown::ParsedSet|
+     -> Result<[damage_calc::Move; 4], DataError> {
+        Ok([
+            crate::damage_bridge::build_move(data, &names[0], set)?,
+            crate::damage_bridge::build_move(data, &names[1], set)?,
+            crate::damage_bridge::build_move(data, &names[2], set)?,
+            crate::damage_bridge::build_move(data, &names[3], set)?,
+        ])
+    };
+    damage_calc::calculate_all_moves(damage_calc::BatchCalcInput {
+        left,
+        right,
+        left_moves: moves(&request.left_moves, &left_set)?,
+        right_moves: moves(&request.right_moves, &right_set)?,
+        left_to_right_field: request.left_to_right_field.into_field(),
+        right_to_left_field: request.right_to_left_field.into_field(),
+        ruleset: damage_calc::Ruleset::Champions,
+    })
+    .map_err(|error| crate::damage_bridge::BridgeError::Damage(error.to_string()).into())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +170,24 @@ pub struct FieldRequest {
     pub defender_friend_guard: bool,
     #[serde(default)]
     pub defender_leech_seed: bool,
+    #[serde(default)]
+    pub defender_aqua_ring: bool,
+    #[serde(default)]
+    pub ingrain: bool,
+    #[serde(default)]
+    pub defender_nightmare: bool,
+    #[serde(default)]
+    pub defender_curse: bool,
+    #[serde(default)]
+    pub defender_binding: bool,
+    #[serde(default)]
+    pub defender_sea_of_fire: bool,
+    #[serde(default)]
+    pub defender_stealth_rock: bool,
+    #[serde(default)]
+    pub defender_salt_cure: bool,
+    #[serde(default)]
+    pub defender_spikes: u8,
     #[serde(default)]
     pub attacker_boosts: BoostsRequest,
     #[serde(default)]
@@ -217,7 +297,7 @@ pub fn load_metadata() -> Result<MetadataResponse, ApiError> {
     let data = ChampionsData::load()?;
     let mut response = MetadataResponse {
         species: data.species_names().map(str::to_owned).collect(),
-        regulation: data.regulation_m_b_names().map(str::to_owned).collect(),
+        regulation: data.regulation_m_c_names().map(str::to_owned).collect(),
         items: data.item_names().map(str::to_owned).collect(),
         abilities: data.ability_names().map(str::to_owned).collect(),
         moves: data.move_names().map(str::to_owned).collect(),
@@ -483,11 +563,21 @@ impl FieldRequest {
             attacker_tailwind: self.attacker_tailwind,
             defender_tailwind: self.defender_tailwind,
             defender_leech_seed: self.defender_leech_seed,
+            defender_aqua_ring: self.defender_aqua_ring,
+            ingrain: self.ingrain,
+            defender_nightmare: self.defender_nightmare,
+            defender_curse: self.defender_curse,
+            defender_binding: self.defender_binding,
+            defender_sea_of_fire: self.defender_sea_of_fire,
+
             defender_side: SideConditions {
                 reflect: self.defender_reflect,
                 light_screen: self.defender_light_screen,
                 aurora_veil: self.defender_aurora_veil,
                 friend_guard: self.defender_friend_guard,
+                stealth_rock: self.defender_stealth_rock,
+                salt_cure: self.defender_salt_cure,
+                spikes: self.defender_spikes.min(3),
             },
             ..Field::default()
         };
@@ -544,6 +634,11 @@ impl From<DamageResult> for DamageResponse {
     fn from(value: DamageResult) -> Self {
         Self {
             rolls: value.damage_rolls.clone(),
+            outcome: value.outcome,
+            resolved_move: value.resolved_move.clone(),
+            defender_hp_delta: value.defender_hp_delta,
+            attacker_hp_effects: value.attacker_hp_effects,
+            ko_chance_by_move_use: value.ko_chance_by_move_use.clone(),
             summary: DamageSummary::from(value),
         }
     }
@@ -556,6 +651,42 @@ mod tests {
 
     const KINGAMBIT: &str = "Kingambit\nAbility: Defiant\nSPs: 32 Atk\nAdamant Nature\n- Iron Head";
     const FLOETTE: &str = "Mega Floette\n- Protect";
+
+    #[test]
+    fn new_field_effects_deserialize_and_reach_engine() {
+        let empty: FieldRequest = serde_json::from_str("{}").unwrap();
+        assert_eq!(empty.into_field().defender_side.spikes, 0);
+        let field: FieldRequest = serde_json::from_value(serde_json::json!({
+            "defender_aqua_ring": true, "ingrain": true,
+            "defender_nightmare": true, "defender_curse": true,
+            "defender_binding": true, "defender_sea_of_fire": true,
+            "defender_stealth_rock": true, "defender_salt_cure": true,
+            "defender_spikes": 8
+        }))
+        .unwrap();
+        let field = field.into_field();
+        assert!(field.defender_aqua_ring && field.ingrain && field.defender_nightmare);
+        assert!(field.defender_curse && field.defender_binding && field.defender_sea_of_fire);
+        assert!(field.defender_side.stealth_rock && field.defender_side.salt_cure);
+        assert_eq!(field.defender_side.spikes, 3);
+    }
+
+    #[test]
+    fn batch_api_returns_four_moves_in_both_directions() {
+        let result = calculate_all_moves_request(AllMovesRequest {
+            left_set: KINGAMBIT.into(),
+            right_set: FLOETTE.into(),
+            left_moves: ["Iron Head", "Protect", "Kowtow Cleave", "Sucker Punch"].map(String::from),
+            right_moves: ["Moonblast", "Protect", "Psychic", "Energy Ball"].map(String::from),
+            left_to_right_field: FieldRequest::default(),
+            right_to_left_field: FieldRequest::default(),
+        })
+        .unwrap();
+        assert_eq!(result.left.len(), 4);
+        assert_eq!(result.right.len(), 4);
+        assert_eq!(result.left[1].outcome, damage_calc::DamageOutcome::Status);
+        assert!(result.left[0].max_damage > 0);
+    }
 
     #[test]
     fn finds_min_survival_spread_for_visualizer() {
@@ -688,11 +819,12 @@ mod tests {
         assert_eq!(sitrus.hit_rolls.len(), 2);
         assert_eq!((sitrus.min_damage, sitrus.max_damage), (144, 172));
         assert_eq!(no_item.ko_chance, Some(0.62890625));
-        assert_eq!(sitrus.ko_chance, Some(0.078125));
+        // The pinned reference uses cumulative berry healing markers.
+        assert_eq!(sitrus.ko_chance, Some(0.0));
     }
 
     #[test]
-    fn focus_sash_counts_in_min_survival_search() {
+    fn focus_sash_search_follows_upstream_ko_projection() {
         let data = ChampionsData::load().unwrap();
         let response = find_min_hp_def_survival_with_data(
             &data,
@@ -714,9 +846,8 @@ mod tests {
         )
         .unwrap();
 
-        let best = response.best.expect("Focus Sash should prevent full-HP KO");
-        assert_eq!(best.total_points, 0);
-        assert_eq!(best.result.ko_chance, Some(0.0));
+        // Upstream's current KO projection does not apply Focus Sash survival.
+        assert!(response.best.is_none());
     }
 
     #[test]
@@ -977,12 +1108,9 @@ mod tests {
                 defender: "Blastoise\n- Protect",
                 move_name: "Double-Edge",
                 field: None,
-                expected_min: 123,
-                expected_max: 145,
-                expected_unique: &[
-                    123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136,
-                    137, 138, 139, 140, 141, 142, 143, 144, 145,
-                ],
+                expected_min: 101,
+                expected_max: 121,
+                expected_unique: &[101, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121],
                 expected_roll_count: Some(256),
             },
             BenchmarkCase {

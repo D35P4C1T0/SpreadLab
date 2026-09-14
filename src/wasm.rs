@@ -19,6 +19,12 @@ pub fn calculate_damage_json(request_json: &str) -> Result<String, JsValue> {
     to_json(calculate_damage_request(request))
 }
 
+#[wasm_bindgen(js_name = calculateAllMoves)]
+pub fn calculate_all_moves_json(request_json: &str) -> Result<String, JsValue> {
+    let request = from_json::<crate::api::AllMovesRequest>(request_json)?;
+    to_json(crate::api::calculate_all_moves_request(request))
+}
+
 #[wasm_bindgen(js_name = findMinHpDefSurvival)]
 pub fn find_min_hp_def_survival_json(request_json: &str) -> Result<String, JsValue> {
     let request = from_json::<HpDefSurvivalRequest>(request_json)?;

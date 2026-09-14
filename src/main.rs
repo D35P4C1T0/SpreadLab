@@ -415,7 +415,7 @@ fn main() -> Result<()> {
             let mut names = match kind {
                 ListKind::Species => data.species_names().map(str::to_owned).collect::<Vec<_>>(),
                 ListKind::Regulation => data
-                    .regulation_m_b_names()
+                    .regulation_m_c_names()
                     .map(str::to_owned)
                     .collect::<Vec<_>>(),
                 ListKind::Items => data.item_names().map(str::to_owned).collect::<Vec<_>>(),

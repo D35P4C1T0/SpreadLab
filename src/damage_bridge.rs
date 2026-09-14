@@ -55,22 +55,11 @@ pub fn calculate_benchmark(
 ) -> Result<DamageResult, BridgeError> {
     let mut attacker = build_pokemon(data, &benchmark.attacker)?;
     let mut defender = build_pokemon(data, &benchmark.defender)?;
-    let mut move_ = data.move_data(&benchmark.move_name)?.to_damage_move()?;
+    let mut move_ = build_move(data, &benchmark.move_name, &benchmark.attacker)?;
     move_.set_effect_count(EffectCount::from(benchmark.move_times_affected));
-    move_.is_critical = benchmark.critical;
-    move_.targets_single_target =
-        move_.targets_single_target || benchmark.attacker.move_targets_single_target;
-    if let Some(hits) = fixed_hit_count(&move_.name) {
-        move_.hits = hits;
-    }
-    if is_slice_move(&move_.name) {
-        move_.is_slice = true;
-    }
+    move_.is_critical |= benchmark.critical;
     if benchmark.fairy_aura {
         attacker.ability = Ability::FairyAura;
-    }
-    if attacker.ability == Ability::SkillLink && is_skill_link_move(&move_.name) {
-        move_.hits = 5;
     }
     if let Some(boosts) = benchmark.attacker_boosts {
         attacker.boosts = boosts;
@@ -89,6 +78,31 @@ pub fn calculate_benchmark(
         ruleset: Ruleset::Champions,
     })
     .map_err(|error| BridgeError::Damage(error.to_string()))
+}
+
+pub(crate) fn build_move(
+    data: &ChampionsData,
+    name: &str,
+    set: &ParsedSet,
+) -> Result<damage_calc::Move, DataError> {
+    let mut move_ = data.move_data(name)?.to_damage_move()?;
+    move_.targets_single_target |= set.move_targets_single_target;
+    if damage_calc::data::champions::champions_reference_move(&move_.name).is_none() {
+        if let Some(hits) = fixed_hit_count(&move_.name) {
+            move_.hits = hits;
+        }
+        move_.is_slice |= is_slice_move(&move_.name);
+        move_.is_critical |= move_.name == "Surging Strikes";
+    }
+    let ability = set
+        .ability
+        .as_deref()
+        .map(crate::data::parse_ability)
+        .transpose()?;
+    if ability == Some(Ability::SkillLink) && is_skill_link_move(&move_.name) {
+        move_.hits = 5;
+    }
+    Ok(move_)
 }
 
 pub fn build_pokemon(data: &ChampionsData, set: &ParsedSet) -> Result<Pokemon, BridgeError> {
@@ -146,8 +160,8 @@ fn is_skill_link_move(name: &str) -> bool {
 
 fn fixed_hit_count(name: &str) -> Option<u8> {
     match name {
-        "Double Hit" | "Double Iron Bash" | "Double Kick" | "Double Shock" | "Dual Chop"
-        | "Dual Wingbeat" | "Gear Grind" | "Tachyon Cutter" | "Twin Beam" | "Twinneedle" => Some(2),
+        "Double Hit" | "Double Iron Bash" | "Double Kick" | "Dual Chop" | "Dual Wingbeat"
+        | "Gear Grind" | "Tachyon Cutter" | "Twin Beam" | "Twinneedle" => Some(2),
         "Surging Strikes" | "Triple Axel" | "Triple Dive" | "Triple Kick" => Some(3),
         _ => None,
     }
