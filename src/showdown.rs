@@ -34,6 +34,10 @@ pub struct ParsedSet {
     pub training_format: Option<TrainingFormat>,
     pub stat_points: StatPoints,
     pub status: StatusCondition,
+    /// Whether the ability exists for this calculation. Independent of its
+    /// conditional activation (for example Flash Fire's damage boost).
+    #[serde(default = "default_ability_enabled")]
+    pub ability_enabled: bool,
     pub ability_on: bool,
     pub supreme_overlord_allies: u8,
     pub rivalry: Option<RivalryMode>,
@@ -70,6 +74,10 @@ pub fn approximate_ev_from_champions(value: u16) -> u16 {
     } else {
         252.min(4 + (points - 1) * 8)
     }
+}
+
+fn default_ability_enabled() -> bool {
+    true
 }
 
 pub fn parse_set(text: &str) -> Result<ParsedSet, ShowdownError> {
@@ -115,6 +123,7 @@ pub fn parse_set(text: &str) -> Result<ParsedSet, ShowdownError> {
         training_format,
         stat_points,
         status,
+        ability_enabled: parse_bool_line(&normalized, "Ability Enabled:").unwrap_or(true),
         ability_on,
         supreme_overlord_allies,
         rivalry,
@@ -426,6 +435,24 @@ fn normalize_key(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ability_enabled_is_independent_and_backwards_compatible() {
+        let original = parse_set("Arcanine\nAbility: Flash Fire\nAbility On: false").unwrap();
+        assert!(original.ability_enabled);
+        assert!(!original.ability_on);
+        let disabled =
+            parse_set("Mega Lucario Z\nAbility: Aura Guard\nAbility Enabled: false").unwrap();
+        assert!(!disabled.ability_enabled);
+        assert!(disabled.ability_on);
+        let mut old_json = serde_json::to_value(&original).unwrap();
+        old_json.as_object_mut().unwrap().remove("ability_enabled");
+        assert!(
+            serde_json::from_value::<ParsedSet>(old_json)
+                .unwrap()
+                .ability_enabled
+        );
+    }
 
     #[test]
     fn ability_toggle_defaults_follow_upstream_and_allow_overrides() {

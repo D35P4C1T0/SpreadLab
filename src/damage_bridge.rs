@@ -99,7 +99,8 @@ pub(crate) fn build_move(
         .as_deref()
         .map(crate::data::parse_ability)
         .transpose()?;
-    if ability == Some(Ability::SkillLink) && is_skill_link_move(&move_.name) {
+    if set.ability_enabled && ability == Some(Ability::SkillLink) && is_skill_link_move(&move_.name)
+    {
         move_.hits = 5;
     }
     Ok(move_)
@@ -116,7 +117,10 @@ pub fn build_pokemon(data: &ChampionsData, set: &ParsedSet) -> Result<Pokemon, B
     );
     pokemon.weight_kg = species.weight_kg;
     if let Some(ability) = &set.ability {
-        pokemon.ability = crate::data::parse_ability(ability)?;
+        let ability = crate::data::parse_ability(ability)?;
+        if set.ability_enabled {
+            pokemon.ability = ability;
+        }
     }
     if let Some(item) = &set.item {
         pokemon.item = crate::data::parse_item(item)?;
@@ -125,7 +129,7 @@ pub fn build_pokemon(data: &ChampionsData, set: &ParsedSet) -> Result<Pokemon, B
         pokemon.tera_type = Some(crate::data::parse_type(tera_type)?);
     }
     pokemon.status = set.status;
-    pokemon.ability_on = set.ability_on;
+    pokemon.ability_on = set.ability_enabled && set.ability_on;
     pokemon.supreme_overlord_allies = set.supreme_overlord_allies;
     if pokemon.ability == Ability::Rivalry {
         match set.rivalry {

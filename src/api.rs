@@ -649,6 +649,185 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
+    fn ability_damage(
+        attacker: &str,
+        defender: &str,
+        move_name: &str,
+        field: serde_json::Value,
+    ) -> serde_json::Value {
+        let request = serde_json::from_value(serde_json::json!({
+            "attacker_set": attacker, "defender_set": defender,
+            "move_name": move_name, "move_times_affected": 0, "field": field
+        }))
+        .unwrap();
+        serde_json::to_value(calculate_damage_request(request).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn new_mega_offensive_abilities_respect_move_flags_and_toggle() {
+        for (species, ability, boosted, unchanged) in [
+            ("Mega Absol Z", "Sharpness", "Night Slash", "Sucker Punch"),
+            ("Mega Golisopod", "Tough Claws", "Liquidation", "Surf"),
+            ("Mega Salamence", "Aerilate", "Double-Edge", "Dragon Claw"),
+            ("Mega Feraligatr", "Dragonize", "Double-Edge", "Liquidation"),
+            (
+                "Toxtricity (Amped Form)",
+                "Punk Rock",
+                "Overdrive",
+                "Thunderbolt",
+            ),
+            ("Perrserker", "Steely Spirit", "Iron Head", "Close Combat"),
+        ] {
+            for (move_name, should_boost) in [(boosted, true), (unchanged, false)] {
+                let mut damages = Vec::new();
+                for enabled in [false, true] {
+                    let attacker =
+                        format!("{species}\nAbility: {ability}\nAbility Enabled: {enabled}");
+                    let result = ability_damage(
+                        &attacker,
+                        "Milotic\nAbility: None",
+                        move_name,
+                        serde_json::json!({}),
+                    );
+                    damages.push(result["summary"]["max_damage"].as_u64().unwrap());
+                }
+                if should_boost {
+                    assert!(
+                        damages[1] > damages[0],
+                        "{ability}: {move_name} {damages:?}"
+                    );
+                } else {
+                    assert_eq!(damages[1], damages[0], "{ability}: {move_name}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn levitate_immunity_and_piercing_drill_damage_modifier() {
+        for (enabled, gravity, immune) in [
+            (true, false, true),
+            (false, false, false),
+            (true, true, false),
+        ] {
+            let defender =
+                format!("Mega Garchomp Z\nAbility: Levitate\nAbility Enabled: {enabled}");
+            let result = ability_damage(
+                "Garchomp\nAbility: None",
+                &defender,
+                "Earthquake",
+                serde_json::json!({"gravity": gravity}),
+            );
+            assert_eq!(
+                result["summary"]["max_damage"].as_u64().unwrap() == 0,
+                immune
+            );
+        }
+        for (move_name, contact) in [("Iron Head", true), ("Earthquake", false)] {
+            let attacker = "Mega Excadrill\nAbility: Piercing Drill";
+            let normal = ability_damage(attacker, "Milotic", move_name, serde_json::json!({}));
+            let protected = ability_damage(
+                attacker,
+                "Milotic",
+                move_name,
+                serde_json::json!({"protect": true}),
+            );
+            let disabled = ability_damage(
+                &format!("{attacker}\nAbility Enabled: false"),
+                "Milotic",
+                move_name,
+                serde_json::json!({"protect": true}),
+            );
+            let normal = normal["summary"]["max_damage"].as_u64().unwrap();
+            let protected = protected["summary"]["max_damage"].as_u64().unwrap();
+            // The pinned engine models Protect's damage modifier, not ordinary
+            // move blocking. Compare the ability modifier independently.
+            let disabled = disabled["summary"]["max_damage"].as_u64().unwrap();
+            if contact {
+                assert!(protected.abs_diff(normal / 4) <= 1);
+                assert!(disabled > protected);
+            } else {
+                assert_eq!(protected, disabled);
+            }
+        }
+    }
+
+    #[test]
+    fn mega_sol_changes_only_its_users_moves() {
+        let active = "Mega Meganium\nAbility: Mega Sol";
+        let inactive = "Mega Meganium\nAbility: Mega Sol\nAbility Enabled: false";
+        let sunny = ability_damage(
+            inactive,
+            "Milotic",
+            "Weather Ball",
+            serde_json::json!({"weather": "Sun"}),
+        );
+        let rain = serde_json::json!({"weather": "Rain"});
+        let personal_sun = ability_damage(active, "Milotic", "Weather Ball", rain.clone());
+        assert_eq!(personal_sun["rolls"], sunny["rolls"]);
+        let incoming = ability_damage("Charizard", active, "Flamethrower", rain.clone());
+        let baseline = ability_damage("Charizard", inactive, "Flamethrower", rain);
+        assert_eq!(incoming["rolls"], baseline["rolls"]);
+    }
+
+    #[test]
+    fn spicy_spray_burns_between_hits_and_thermal_exchange_prevents_it() {
+        let defender = "Mega Scovillain\nAbility: Spicy Spray";
+        let disabled = format!("{defender}\nAbility Enabled: false");
+        for ability in ["None", "Thermal Exchange"] {
+            let attacker = format!("Mega Baxcalibur\nAbility: {ability}");
+            let normal = ability_damage(&attacker, &disabled, "Double Kick", serde_json::json!({}));
+            let burned = ability_damage(&attacker, defender, "Double Kick", serde_json::json!({}));
+            if ability == "None" {
+                assert!(
+                    burned["summary"]["max_damage"].as_u64().unwrap()
+                        < normal["summary"]["max_damage"].as_u64().unwrap()
+                );
+            } else {
+                assert_eq!(burned["rolls"], normal["rolls"]);
+            }
+        }
+    }
+
+    #[test]
+    fn disabling_passive_abilities_is_distinct_from_conditional_activation() {
+        let attacker = "Lucario\nAbility: Inner Focus";
+        let disabled = ability_damage(
+            attacker,
+            "Mega Lucario Z\nAbility: Aura Guard\nAbility Enabled: false",
+            "Close Combat",
+            serde_json::json!({}),
+        );
+        let guarded = ability_damage(
+            attacker,
+            "Mega Lucario Z\nAbility: Aura Guard\nAbility On: false",
+            "Close Combat",
+            serde_json::json!({}),
+        );
+        for (normal, reduced) in disabled["rolls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(guarded["rolls"].as_array().unwrap())
+        {
+            assert_eq!(reduced.as_u64().unwrap(), normal.as_u64().unwrap() / 2);
+        }
+        let immune = ability_damage(
+            "Charizard",
+            "Arcanine\nAbility: Flash Fire\nAbility On: false",
+            "Flamethrower",
+            serde_json::json!({}),
+        );
+        let vulnerable = ability_damage(
+            "Charizard",
+            "Arcanine\nAbility: Flash Fire\nAbility Enabled: false",
+            "Flamethrower",
+            serde_json::json!({}),
+        );
+        assert_eq!(immune["summary"]["max_damage"], 0);
+        assert!(vulnerable["summary"]["max_damage"].as_u64().unwrap() > 0);
+    }
+
     const KINGAMBIT: &str = "Kingambit\nAbility: Defiant\nSPs: 32 Atk\nAdamant Nature\n- Iron Head";
     const FLOETTE: &str = "Mega Floette\n- Protect";
 

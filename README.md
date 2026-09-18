@@ -270,3 +270,23 @@ Still to build:
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Ability state and viewer integration
+
+`Ability Enabled: false` disables the ability for damage, move construction,
+entry effects, and optimization. It defaults to true, including deserialization
+of older `ParsedSet` values. `Ability On:` keeps its existing meaning: conditional
+activation, such as Flash Fire's boost. Turning that activation off does not
+remove passive effects such as Flash Fire's immunity.
+
+Viewers should submit selected abilities and explicit field/stage inputs without
+applying ability rules themselves. The damage library handles entry effects and
+move interactions. In particular, Mega Sol supplies personal sunlight only for
+its user's moves; it must not set shared weather. Intimidate must not be applied
+to input stages by a viewer, since engine preprocessing already applies it.
+
+The pinned engine models Piercing Drill's quarter damage through Protect but
+does not block ordinary attacks when Protect is selected. Seed Sower's terrain,
+Emergency Exit's switch, and Thermal Exchange's Attack boost are not simulated
+across turns. Set subsequent battle state explicitly. Spicy Spray does apply
+burn between hits of a multi-hit move; separate calculations do not persist it.
