@@ -1,13 +1,15 @@
 use crate::damage_bridge::{calculate_benchmark, DamageBenchmark};
 use crate::data::{ChampionsData, DataError};
 use crate::optimize::{
-    all_natures, hp_def_combined_survival_search, hp_def_survival_search_from_hp_percent,
-    offensive_ko_search, optimize_defensive, optimize_offensive,
-    optimized_combined_defensive_natures, optimized_defensive_natures, optimized_offensive_natures,
+    offensive_ko_search, optimize_defensive, optimize_offensive, optimized_offensive_natures,
     CombinedSurvivalSpread, DamageSummary, KoSpread, OptimizeError, RankedSpread, SurvivalSpread,
 };
 use crate::showdown::{parse_set, ShowdownError};
 use crate::spreads::{LockedStats, SpreadSearch};
+use crate::survival::{
+    survival_natures, survival_search, ExactSurvivalSearchResult, SurvivalEvaluation,
+    SurvivalSearchOptions,
+};
 use damage_calc::{Boosts, DamageResult, Field, Format, Nature, SideConditions, Terrain, Weather};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -210,6 +212,8 @@ pub struct BoostsRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HpDefSurvivalRequest {
+    #[serde(default)]
+    pub search: Option<SurvivalSearchOptions>,
     pub attacker_set: String,
     pub defender_set: String,
     pub move_name: String,
@@ -238,6 +242,11 @@ pub struct IncomingHitRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CombinedHpDefSurvivalRequest {
+    #[serde(default)]
+    pub search: Option<SurvivalSearchOptions>,
+    /// Omitted preserves legacy end-of-turn after every attack; [] means none.
+    #[serde(default)]
+    pub end_turn_after: Option<Vec<bool>>,
     pub defender_set: String,
     pub hits: Vec<IncomingHitRequest>,
     pub max_ko_chance: f32,
@@ -282,6 +291,65 @@ pub struct CombinedHpDefSurvivalResponse {
     pub best: Option<CombinedSurvivalSpread>,
     pub matches: Vec<CombinedSurvivalSpread>,
     pub closest_miss: Option<CombinedSurvivalSpread>,
+}
+
+/// Exact minimum-investment API for independent constraints or an ordered sequence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SurvivalRequest {
+    pub defender_set: String,
+    pub hits: Vec<IncomingHitRequest>,
+    /// One per independent hit, or one for the entire sequence.
+    pub max_ko_chances: Vec<f32>,
+    #[serde(default)]
+    pub hp_percent: Option<f32>,
+    #[serde(default)]
+    pub nature: Option<Nature>,
+    #[serde(default)]
+    pub optimize_nature: bool,
+    #[serde(default)]
+    pub search: SurvivalSearchOptions,
+    #[serde(default)]
+    pub evaluation: SurvivalEvaluation,
+}
+
+pub fn find_min_survival(request: SurvivalRequest) -> Result<ExactSurvivalSearchResult, ApiError> {
+    find_min_survival_with_data(&ChampionsData::load()?, request)
+}
+
+pub fn find_min_survival_with_data(
+    data: &ChampionsData,
+    request: SurvivalRequest,
+) -> Result<ExactSurvivalSearchResult, ApiError> {
+    let defender = parse_set(&request.defender_set)?;
+    let natures = survival_natures(
+        defender.nature,
+        request.nature,
+        request.optimize_nature,
+        &request.search,
+    );
+    let benchmarks = request
+        .hits
+        .into_iter()
+        .map(|hit| {
+            benchmark_from_sets(
+                &hit.attacker_set,
+                &request.defender_set,
+                hit.move_name,
+                hit.move_times_affected,
+                hit.critical,
+                hit.field,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(survival_search(
+        data,
+        &benchmarks,
+        &natures,
+        &request.max_ko_chances,
+        request.hp_percent.unwrap_or(100.0),
+        &request.search,
+        &request.evaluation,
+    )?)
 }
 
 impl HpDefSurvivalRequest {
@@ -351,24 +419,23 @@ pub fn find_min_hp_def_survival_with_data(
         request.critical,
         request.field,
     )?;
-    let owned_natures;
-    let natures = if let Some(nature) = request.nature {
-        owned_natures = vec![nature];
-        owned_natures.as_slice()
-    } else if request.optimize_nature {
-        owned_natures = optimized_defensive_natures(data, &benchmark)?.to_vec();
-        owned_natures.as_slice()
-    } else {
-        owned_natures = all_natures().to_vec();
-        owned_natures.as_slice()
-    };
-    let result = hp_def_survival_search_from_hp_percent(
+    let options = request.search.unwrap_or_else(|| SurvivalSearchOptions {
+        limit: request.limit,
+        ..Default::default()
+    });
+    let natures = survival_natures(
+        benchmark.defender.nature,
+        request.nature,
+        request.optimize_nature,
+        &options,
+    );
+    let result = crate::optimize::hp_def_survival_search_with_options(
         data,
         &benchmark,
-        natures,
+        &natures,
         request.max_ko_chance,
         request.hp_percent.unwrap_or(100.0),
-        request.limit,
+        &options,
     )?;
     Ok(HpDefSurvivalResponse {
         best: result.matches.first().cloned(),
@@ -442,24 +509,27 @@ pub fn find_min_combined_hp_def_survival_with_data(
             Ok(benchmark)
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
-    let owned_natures;
-    let natures = if let Some(nature) = request.nature {
-        owned_natures = vec![nature];
-        owned_natures.as_slice()
-    } else if request.optimize_nature {
-        owned_natures = optimized_combined_defensive_natures(data, &benchmarks)?;
-        owned_natures.as_slice()
-    } else {
-        owned_natures = all_natures().to_vec();
-        owned_natures.as_slice()
-    };
-    let result = hp_def_combined_survival_search(
+    let options = request.search.unwrap_or_else(|| SurvivalSearchOptions {
+        limit,
+        ..Default::default()
+    });
+    let natures = survival_natures(
+        defender.nature,
+        request.nature,
+        request.optimize_nature,
+        &options,
+    );
+    let end_turn_after = request
+        .end_turn_after
+        .unwrap_or_else(|| vec![true; benchmarks.len()]);
+    let result = crate::optimize::hp_def_combined_survival_search_with_options(
         data,
         &benchmarks,
-        natures,
+        &natures,
         request.max_ko_chance,
         request.hp_percent.unwrap_or(100.0),
-        limit,
+        &options,
+        &end_turn_after,
     )?;
     Ok(CombinedHpDefSurvivalResponse {
         best: result.matches.first().cloned(),
@@ -498,7 +568,7 @@ pub fn find_min_offensive_ko_with_data(
         owned_natures = optimized_offensive_natures(data, &benchmark)?.to_vec();
         owned_natures.as_slice()
     } else {
-        owned_natures = all_natures().to_vec();
+        owned_natures = vec![benchmark.attacker.nature];
         owned_natures.as_slice()
     };
     let result = offensive_ko_search(data, &benchmark, natures, request.min_ko_chance, limit)?;
@@ -873,13 +943,14 @@ mod tests {
         let response = find_min_hp_def_survival_with_data(
             &data,
             HpDefSurvivalRequest {
+                search: None,
                 attacker_set: KINGAMBIT.to_owned(),
                 defender_set: FLOETTE.to_owned(),
                 move_name: "Iron Head".to_owned(),
                 max_ko_chance: 0.125,
                 hp_percent: None,
                 nature: None,
-                optimize_nature: false,
+                optimize_nature: true,
                 limit: 4,
                 move_times_affected: 0,
                 critical: false,
@@ -1008,6 +1079,7 @@ mod tests {
         let response = find_min_hp_def_survival_with_data(
             &data,
             HpDefSurvivalRequest {
+                search: None,
                 attacker_set:
                     "Sneasler\nAbility: Unburden\nSPs: 32 Atk\nAdamant Nature\n- Close Combat"
                         .to_owned(),
@@ -1060,6 +1132,7 @@ mod tests {
         let response = find_min_hp_def_survival_with_data(
             &data,
             HpDefSurvivalRequest {
+                search: None,
                 attacker_set:
                     "Sneasler @ White Herb\nAbility: Unburden\nSPs: 10+ Atk\n- Close Combat"
                         .to_owned(),
@@ -1089,6 +1162,7 @@ mod tests {
         let response = find_min_hp_def_survival_with_data(
             &data,
             HpDefSurvivalRequest {
+                search: None,
                 attacker_set:
                     "Sneasler @ White Herb\nAbility: Unburden\nSPs: 10 Atk\nAdamant Nature\n- Close Combat"
                         .to_owned(),
@@ -1118,6 +1192,7 @@ mod tests {
         let response = find_min_hp_def_survival_with_data(
             &data,
             HpDefSurvivalRequest {
+                search: None,
                 attacker_set: "Sneasler @ White Herb\nAbility: Unburden\nLevel: 50\nEVs: 20 HP / 10 Atk / 21 Def / 15 Spe\nAdamant Nature\n- Close Combat\n- Fake Out\n- Dire Claw\n- Protect"
                     .to_owned(),
                 defender_set: "Kingambit @ Chople Berry\nAbility: Defiant\nSPs: 32 Atk\nAdamant Nature\n- Iron Head\n- Kowtow Cleave"
@@ -1417,6 +1492,7 @@ mod tests {
         let response = find_min_hp_def_survival_with_data(
             &data,
             HpDefSurvivalRequest {
+                search: None,
                 attacker_set: KINGAMBIT.to_owned(),
                 defender_set: FLOETTE.to_owned(),
                 move_name: "Iron Head".to_owned(),
@@ -1445,6 +1521,8 @@ mod tests {
         let response = find_min_combined_hp_def_survival_with_data(
             &data,
             CombinedHpDefSurvivalRequest {
+                search: None,
+                end_turn_after: None,
                 defender_set: FLOETTE.to_owned(),
                 hits: vec![
                     IncomingHitRequest {
@@ -1484,6 +1562,8 @@ mod tests {
     fn leftovers_recovery_counts_between_sequence_hits() {
         let data = ChampionsData::load().unwrap();
         let request = |defender_set: &str| CombinedHpDefSurvivalRequest {
+            search: None,
+            end_turn_after: None,
             defender_set: defender_set.to_owned(),
             hits: vec![
                 IncomingHitRequest {
@@ -1527,6 +1607,8 @@ mod tests {
         let response = find_min_combined_hp_def_survival_with_data(
             &data,
             CombinedHpDefSurvivalRequest {
+                search: None,
+                end_turn_after: None,
                 defender_set: "Kingambit\nStatus: Poisoned\n- Protect".to_owned(),
                 hits: vec![
                     IncomingHitRequest {
@@ -1566,6 +1648,8 @@ mod tests {
         let response = find_min_combined_hp_def_survival_with_data(
             &data,
             CombinedHpDefSurvivalRequest {
+                search: None,
+                end_turn_after: None,
                 defender_set: "Kingambit\n- Protect".to_owned(),
                 hits: vec![
                     IncomingHitRequest {
@@ -1607,7 +1691,7 @@ mod tests {
                 move_name: "Last Respects".to_owned(),
                 min_ko_chance: 1.0,
                 nature: None,
-                optimize_nature: false,
+                optimize_nature: true,
                 limit: 1,
                 move_times_affected: 1,
                 critical: false,
@@ -1621,7 +1705,7 @@ mod tests {
     }
 
     #[test]
-    fn optimized_nature_mode_only_checks_boosted_nature() {
+    fn optimized_nature_mode_keeps_equivalent_boosted_natures() {
         let data = ChampionsData::load().unwrap();
         let response = find_min_offensive_ko_with_data(
             &data,
@@ -1641,10 +1725,14 @@ mod tests {
         )
         .unwrap();
 
+        assert!(response.matches.iter().all(|spread| matches!(
+            spread.nature,
+            Nature::Adamant | Nature::Brave | Nature::Lonely | Nature::Naughty
+        )));
         assert!(response
             .matches
             .iter()
-            .all(|spread| matches!(spread.nature, Nature::Adamant)));
+            .any(|spread| spread.nature == Nature::Brave));
     }
 
     #[derive(Clone, Copy)]

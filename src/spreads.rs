@@ -1,4 +1,5 @@
 use crate::stats::{StatPoints, MAX_STAT_POINTS, MAX_TOTAL_STAT_POINTS};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SpreadSearch {
@@ -7,7 +8,8 @@ pub struct SpreadSearch {
     pub locked: LockedStats,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LockedStats {
     pub hp: Option<u16>,
     pub attack: Option<u16>,

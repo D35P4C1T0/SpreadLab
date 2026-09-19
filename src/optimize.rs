@@ -7,11 +7,14 @@ use damage_calc::{
     Ability, DamageResult, Item, Nature, PokemonType, StatusCondition, Terrain, Weather,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum OptimizeError {
+    #[error("invalid optimization request: {0}")]
+    InvalidInput(String),
+    #[error("damage engine returned no usable KO probability")]
+    UnknownKoProbability,
     #[error(transparent)]
     Bridge(#[from] crate::damage_bridge::BridgeError),
     #[error(transparent)]
@@ -95,6 +98,8 @@ pub struct CombinedSurvivalSearchResult {
 pub enum OffensiveInvestmentStat {
     Attack,
     SpecialAttack,
+    Defense,
+    None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,6 +120,8 @@ pub struct KoSearchResult {
     pub closest_miss: Option<KoSpread>,
 }
 
+/// Score-based ranking, not minimum investment. For threshold constraints use
+/// `survival::survival_search` (including independent multiple benchmarks).
 pub fn optimize_defensive(
     data: &ChampionsData,
     benchmarks: &[DamageBenchmark],
@@ -124,6 +131,7 @@ pub fn optimize_defensive(
     optimize(data, benchmarks, search, limit, OptimizationMode::Defensive)
 }
 
+/// Score-based ranking, not minimum investment.
 pub fn optimize_offensive(
     data: &ChampionsData,
     benchmarks: &[DamageBenchmark],
@@ -161,84 +169,52 @@ pub fn hp_def_survival_search_from_hp_percent(
     hp_percent: f32,
     limit: usize,
 ) -> Result<SurvivalSearchResult, OptimizeError> {
-    let species = data.species(&benchmark.defender.species)?;
-    let mut matches = Vec::new();
-    let mut misses = Vec::new();
+    hp_def_survival_search_with_options(
+        data,
+        benchmark,
+        natures,
+        max_ko_chance,
+        hp_percent,
+        &crate::survival::SurvivalSearchOptions {
+            limit,
+            ..Default::default()
+        },
+    )
+}
 
-    for nature in natures {
-        for hp in 0..=32 {
-            for defense in 0..=32 {
-                let sps = StatPoints::new(hp, 0, defense, 0, 0, 0);
-                let mut candidate = benchmark.clone();
-                candidate.defender.nature = *nature;
-                candidate.defender.stat_points = sps;
-
-                let final_stats = champions_final_stats(species.base_stats(), *nature, sps)?;
-                candidate.defender_current_hp =
-                    Some(current_hp_from_percent(final_stats.hp, hp_percent));
-                let summary = DamageSummary::from(calculate_benchmark(data, &candidate)?);
-                let ko_chance = summary.ko_chance.unwrap_or(0.0);
-                let spread = SurvivalSpread {
-                    rank: 0,
-                    nature: *nature,
-                    sps,
-                    sp_line: build_champions_sp_line(sps),
-                    final_stats,
-                    total_points: sps.total(),
-                    result: summary,
-                };
-                if ko_chance <= max_ko_chance {
-                    matches.push(spread);
-                } else {
-                    misses.push(spread);
-                }
-            }
-        }
-    }
-
-    matches.sort_by(|left, right| {
-        left.total_points
-            .cmp(&right.total_points)
-            .then_with(|| {
-                left.result
-                    .ko_chance
-                    .partial_cmp(&right.result.ko_chance)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .then_with(|| left.result.max_damage.cmp(&right.result.max_damage))
-            .then_with(|| left.sps.hp.cmp(&right.sps.hp))
-            .then_with(|| left.sps.defense.cmp(&right.sps.defense))
-    });
-    matches.truncate(limit);
-    for (index, spread) in matches.iter_mut().enumerate() {
-        spread.rank = index + 1;
-    }
-
-    misses.sort_by(|left, right| {
-        left.result
-            .ko_chance
-            .partial_cmp(&right.result.ko_chance)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| {
-                left.result
-                    .percent_max
-                    .partial_cmp(&right.result.percent_max)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .then_with(|| left.result.max_damage.cmp(&right.result.max_damage))
-            .then_with(|| left.total_points.cmp(&right.total_points))
-    });
-    let mut closest_miss = misses.into_iter().next();
-    if let Some(spread) = &mut closest_miss {
-        spread.rank = 1;
-    }
-
+pub fn hp_def_survival_search_with_options(
+    data: &ChampionsData,
+    benchmark: &DamageBenchmark,
+    natures: &[Nature],
+    max_ko_chance: f32,
+    hp_percent: f32,
+    options: &crate::survival::SurvivalSearchOptions,
+) -> Result<SurvivalSearchResult, OptimizeError> {
+    let result = crate::survival::survival_search(
+        data,
+        std::slice::from_ref(benchmark),
+        natures,
+        &[max_ko_chance],
+        hp_percent,
+        options,
+        &crate::survival::SurvivalEvaluation::Independent,
+    )?;
+    let convert = |spread: crate::survival::ExactSurvivalSpread| SurvivalSpread {
+        rank: spread.rank,
+        nature: spread.nature,
+        sps: spread.sps,
+        sp_line: spread.sp_line,
+        final_stats: spread.final_stats,
+        total_points: spread.total_points,
+        result: spread.results.into_iter().next().expect("one benchmark"),
+    };
     Ok(SurvivalSearchResult {
-        matches,
-        closest_miss,
+        matches: result.matches.into_iter().map(convert).collect(),
+        closest_miss: result.closest_miss.map(convert),
     })
 }
 
+/// Compatibility entry point: each attack ends a turn, including the final one.
 pub fn hp_def_combined_survival_search(
     data: &ChampionsData,
     benchmarks: &[DamageBenchmark],
@@ -247,100 +223,54 @@ pub fn hp_def_combined_survival_search(
     hp_percent: f32,
     limit: usize,
 ) -> Result<CombinedSurvivalSearchResult, OptimizeError> {
-    let Some(first_benchmark) = benchmarks.first() else {
-        return Ok(CombinedSurvivalSearchResult {
-            matches: Vec::new(),
-            closest_miss: None,
-        });
+    hp_def_combined_survival_search_with_options(
+        data,
+        benchmarks,
+        natures,
+        max_ko_chance,
+        hp_percent,
+        &crate::survival::SurvivalSearchOptions {
+            limit,
+            ..Default::default()
+        },
+        &vec![true; benchmarks.len()],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn hp_def_combined_survival_search_with_options(
+    data: &ChampionsData,
+    benchmarks: &[DamageBenchmark],
+    natures: &[Nature],
+    max_ko_chance: f32,
+    hp_percent: f32,
+    options: &crate::survival::SurvivalSearchOptions,
+    end_turn_after: &[bool],
+) -> Result<CombinedSurvivalSearchResult, OptimizeError> {
+    let result = crate::survival::survival_search(
+        data,
+        benchmarks,
+        natures,
+        &[max_ko_chance],
+        hp_percent,
+        options,
+        &crate::survival::SurvivalEvaluation::Sequence {
+            end_turn_after: end_turn_after.to_vec(),
+        },
+    )?;
+    let convert = |spread: crate::survival::ExactSurvivalSpread| CombinedSurvivalSpread {
+        rank: spread.rank,
+        nature: spread.nature,
+        sps: spread.sps,
+        sp_line: spread.sp_line,
+        final_stats: spread.final_stats,
+        total_points: spread.total_points,
+        hits: spread.results,
+        combined: spread.sequence.expect("sequence evaluation"),
     };
-    let species = data.species(&first_benchmark.defender.species)?;
-    let mut matches = Vec::new();
-    let mut misses = Vec::new();
-
-    for nature in natures {
-        for hp in 0..=32 {
-            for defense in 0..=32 {
-                let sps = StatPoints::new(hp, 0, defense, 0, 0, 0);
-                let final_stats = champions_final_stats(species.base_stats(), *nature, sps)?;
-                let starting_hp = current_hp_from_percent(final_stats.hp, hp_percent);
-                let mut hits = Vec::with_capacity(benchmarks.len());
-
-                for benchmark in benchmarks {
-                    let mut candidate = benchmark.clone();
-                    candidate.defender.nature = *nature;
-                    candidate.defender.stat_points = sps;
-                    candidate.defender_current_hp = Some(starting_hp);
-                    let result = calculate_benchmark(data, &candidate)?;
-                    hits.push(DamageSummary::from(result));
-                }
-
-                let combined = sequence_damage_summary(
-                    data,
-                    benchmarks,
-                    *nature,
-                    sps,
-                    final_stats.hp,
-                    starting_hp,
-                )?;
-                let spread = CombinedSurvivalSpread {
-                    rank: 0,
-                    nature: *nature,
-                    sps,
-                    sp_line: build_champions_sp_line(sps),
-                    final_stats,
-                    total_points: sps.total(),
-                    hits,
-                    combined,
-                };
-                if spread.combined.ko_chance <= max_ko_chance {
-                    matches.push(spread);
-                } else {
-                    misses.push(spread);
-                }
-            }
-        }
-    }
-
-    matches.sort_by(|left, right| {
-        left.total_points
-            .cmp(&right.total_points)
-            .then_with(|| {
-                left.combined
-                    .ko_chance
-                    .partial_cmp(&right.combined.ko_chance)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .then_with(|| left.combined.max_damage.cmp(&right.combined.max_damage))
-            .then_with(|| left.sps.hp.cmp(&right.sps.hp))
-            .then_with(|| left.sps.defense.cmp(&right.sps.defense))
-    });
-    matches.truncate(limit);
-    for (index, spread) in matches.iter_mut().enumerate() {
-        spread.rank = index + 1;
-    }
-
-    misses.sort_by(|left, right| {
-        left.combined
-            .ko_chance
-            .partial_cmp(&right.combined.ko_chance)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| {
-                left.combined
-                    .percent_max
-                    .partial_cmp(&right.combined.percent_max)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .then_with(|| left.combined.max_damage.cmp(&right.combined.max_damage))
-            .then_with(|| left.total_points.cmp(&right.total_points))
-    });
-    let mut closest_miss = misses.into_iter().next();
-    if let Some(spread) = &mut closest_miss {
-        spread.rank = 1;
-    }
-
     Ok(CombinedSurvivalSearchResult {
-        matches,
-        closest_miss,
+        matches: result.matches.into_iter().map(convert).collect(),
+        closest_miss: result.closest_miss.map(convert),
     })
 }
 
@@ -361,28 +291,56 @@ pub fn offensive_ko_search(
     min_ko_chance: f32,
     limit: usize,
 ) -> Result<KoSearchResult, OptimizeError> {
+    crate::survival::validate_probability(min_ko_chance)?;
+    if natures.is_empty() || limit == 0 {
+        return Err(crate::survival::invalid(
+            "nature list and result limit must be nonempty",
+        ));
+    }
     let species = data.species(&benchmark.attacker.species)?;
-    let move_data = data.move_data(&benchmark.move_name)?;
-    let investment_stat = match move_data.category.as_str() {
-        "Physical" => OffensiveInvestmentStat::Attack,
-        "Special" => OffensiveInvestmentStat::SpecialAttack,
-        _ => OffensiveInvestmentStat::Attack,
+    let move_data =
+        crate::damage_bridge::build_move(data, &benchmark.move_name, &benchmark.attacker)?;
+    let investment_stat = if move_data.name == "Body Press" {
+        OffensiveInvestmentStat::Defense
+    } else if move_data.name == "Foul Play" {
+        OffensiveInvestmentStat::None
+    } else {
+        match move_data.category {
+            damage_calc::Category::Physical => OffensiveInvestmentStat::Attack,
+            damage_calc::Category::Special => OffensiveInvestmentStat::SpecialAttack,
+            _ => {
+                return Err(crate::survival::invalid(
+                    "KO search requires a damaging move",
+                ))
+            }
+        }
     };
+    benchmark.attacker.stat_points.validate()?;
     let mut matches = Vec::new();
     let mut misses = Vec::new();
 
     for nature in natures {
         for points in 0..=32 {
-            let sps = match investment_stat {
-                OffensiveInvestmentStat::Attack => StatPoints::new(0, points, 0, 0, 0, 0),
-                OffensiveInvestmentStat::SpecialAttack => StatPoints::new(0, 0, 0, points, 0, 0),
-            };
+            if investment_stat == OffensiveInvestmentStat::None && points != 0 {
+                continue;
+            }
+            let mut sps = benchmark.attacker.stat_points;
+            match investment_stat {
+                OffensiveInvestmentStat::Attack => sps.attack = points,
+                OffensiveInvestmentStat::SpecialAttack => sps.special_attack = points,
+                OffensiveInvestmentStat::Defense => sps.defense = points,
+                OffensiveInvestmentStat::None => {}
+            }
+            if sps.total() > crate::stats::MAX_TOTAL_STAT_POINTS {
+                continue;
+            }
             let mut candidate = benchmark.clone();
             candidate.attacker.nature = *nature;
             candidate.attacker.stat_points = sps;
 
-            let result = calculate_benchmark(data, &candidate)?;
-            let ko_chance = result.ko_chance.unwrap_or(0.0);
+            let mut result = calculate_benchmark(data, &candidate)?;
+            let ko_chance = crate::survival::ko_probability(&result)?;
+            result.ko_chance = Some(ko_chance);
             let spread = KoSpread {
                 rank: 0,
                 nature: *nature,
@@ -475,50 +433,31 @@ pub fn all_natures() -> [Nature; 25] {
     ]
 }
 
+/// Exact nature optimization does not discard natures based on move category.
 pub fn optimized_offensive_natures(
     data: &ChampionsData,
     benchmark: &DamageBenchmark,
 ) -> Result<Vec<Nature>, OptimizeError> {
-    let move_data = data.move_data(&benchmark.move_name)?;
-    Ok(match move_data.category.as_str() {
-        "Special" => vec![Nature::Modest],
-        "Physical" => vec![Nature::Adamant],
-        _ => Vec::new(),
-    })
+    data.move_data(&benchmark.move_name)?;
+    Ok(all_natures().to_vec())
 }
 
 pub fn optimized_defensive_natures(
     data: &ChampionsData,
     benchmark: &DamageBenchmark,
 ) -> Result<Vec<Nature>, OptimizeError> {
-    let move_data = data.move_data(&benchmark.move_name)?;
-    Ok(match move_data.category.as_str() {
-        "Special" => vec![Nature::Calm],
-        "Physical" => vec![Nature::Bold],
-        _ => Vec::new(),
-    })
+    data.move_data(&benchmark.move_name)?;
+    Ok(all_natures().to_vec())
 }
 
 pub fn optimized_combined_defensive_natures(
     data: &ChampionsData,
     benchmarks: &[DamageBenchmark],
 ) -> Result<Vec<Nature>, OptimizeError> {
-    let mut has_physical = false;
-    let mut has_special = false;
     for benchmark in benchmarks {
-        let move_data = data.move_data(&benchmark.move_name)?;
-        match move_data.category.as_str() {
-            "Special" => has_special = true,
-            "Physical" => has_physical = true,
-            _ => {}
-        }
+        data.move_data(&benchmark.move_name)?;
     }
-    Ok(match (has_physical, has_special) {
-        (true, true) => vec![Nature::Bold, Nature::Calm],
-        (true, false) => vec![Nature::Bold],
-        (false, true) => vec![Nature::Calm],
-        (false, false) => Vec::new(),
-    })
+    Ok(all_natures().to_vec())
 }
 
 fn optimize(
@@ -562,7 +501,7 @@ fn optimize(
             }
 
             let result = calculate_benchmark(data, &candidate)?;
-            score += score_result(mode, &result);
+            score += score_result(mode, &result)?;
             summaries.push(DamageSummary::from(result));
         }
 
@@ -591,9 +530,9 @@ fn optimize(
     Ok(ranked)
 }
 
-fn score_result(mode: OptimizationMode, result: &DamageResult) -> f64 {
-    let ko = result.ko_chance.unwrap_or(0.0) as f64;
-    match mode {
+fn score_result(mode: OptimizationMode, result: &DamageResult) -> Result<f64, OptimizeError> {
+    let ko = crate::survival::ko_probability(result)? as f64;
+    Ok(match mode {
         OptimizationMode::Defensive => {
             let max_percent = result.percent_range.1 as f64;
             (1.0 - ko) * 10_000.0 - max_percent
@@ -602,7 +541,7 @@ fn score_result(mode: OptimizationMode, result: &DamageResult) -> f64 {
             let min_percent = result.percent_range.0 as f64;
             ko * 10_000.0 + min_percent
         }
-    }
+    })
 }
 
 impl From<DamageResult> for DamageSummary {
@@ -617,48 +556,113 @@ impl From<DamageResult> for DamageSummary {
     }
 }
 
-fn current_hp_from_percent(max_hp: u16, hp_percent: f32) -> u16 {
+pub(crate) fn current_hp_from_percent(max_hp: u16, hp_percent: f32) -> u16 {
     let percent = hp_percent.clamp(0.0, 100.0);
-    let hp = ((max_hp as f32) * percent / 100.0).ceil() as u16;
+    let hp = (f64::from(max_hp) * f64::from(percent) / 100.0).ceil() as u16;
     hp.clamp(1, max_hp)
 }
 
-fn sequence_damage_summary(
+/// Dynamic programming over the complete state of the supported sequence model.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sequence_damage_summary(
     data: &ChampionsData,
     benchmarks: &[DamageBenchmark],
     nature: Nature,
     sps: StatPoints,
     max_hp: u16,
     starting_hp: u16,
+    end_turn_after: &[bool],
 ) -> Result<CombinedDamageSummary, OptimizeError> {
-    let mut total_probability = 0.0;
-    let mut ko_probability = 0.0;
-    let mut min_damage = u16::MAX;
-    let mut max_damage = 0u16;
-    let mut cache = HashMap::new();
     let defender_item = benchmarks
         .first()
-        .map(|benchmark| &benchmark.defender)
-        .and_then(|defender| defender.item.as_deref())
+        .and_then(|b| b.defender.item.as_deref())
         .map(parse_item)
         .transpose()?
         .unwrap_or(Item::None);
-    count_sequence_rolls(
-        data,
-        benchmarks,
-        nature,
-        sps,
-        max_hp,
-        &mut cache,
-        0,
-        SequenceState::new(starting_hp, defender_item),
-        0,
-        1.0,
-        &mut total_probability,
-        &mut ko_probability,
-        &mut min_damage,
-        &mut max_damage,
-    )?;
+    let mut states = std::collections::BTreeMap::new();
+    states.insert(
+        SequenceState {
+            hp: starting_hp,
+            item: defender_item,
+            toxic_counter: 1,
+        },
+        SequenceMass {
+            probability: 1.0,
+            min_damage: 0,
+            max_damage: 0,
+        },
+    );
+    let mut ko_probability = 0.0;
+    let mut min_damage = u16::MAX;
+    let mut max_damage = 0;
+    for (index, benchmark) in benchmarks.iter().enumerate() {
+        let mut next = std::collections::BTreeMap::new();
+        for (state, mass) in states {
+            let mut candidate = benchmark.clone();
+            candidate.defender.nature = nature;
+            candidate.defender.stat_points = sps;
+            candidate.defender.item = Some(format!("{:?}", state.item));
+            candidate.defender_current_hp = Some(state.hp);
+            let result = calculate_benchmark(data, &candidate)?;
+            if !matches!(
+                result.outcome,
+                damage_calc::DamageOutcome::Damage
+                    | damage_calc::DamageOutcome::Fixed
+                    | damage_calc::DamageOutcome::ImmuneOrFailed
+            ) {
+                return Err(crate::survival::invalid(
+                    "sequence model supports damaging or immune moves only",
+                ));
+            }
+            let rolls = if result.damage_rolls.is_empty() {
+                if result.outcome == damage_calc::DamageOutcome::ImmuneOrFailed {
+                    vec![0]
+                } else {
+                    return Err(OptimizeError::UnknownKoProbability);
+                }
+            } else {
+                result.damage_rolls
+            };
+            let probability = mass.probability / rolls.len() as f64;
+            for damage in rolls {
+                let low = mass.min_damage.saturating_add(damage);
+                let high = mass.max_damage.saturating_add(damage);
+                let mut after = state;
+                if state.item == Item::FocusSash && state.hp == max_hp && damage >= state.hp {
+                    after.hp = 1;
+                    after.item = Item::None;
+                } else {
+                    after.hp = state.hp.saturating_sub(damage);
+                }
+                let after = if after.hp == 0 {
+                    None
+                } else if end_turn_after.get(index).copied().unwrap_or(false) {
+                    apply_end_turn_effects(data, benchmark, nature, sps, max_hp, after)?
+                } else {
+                    Some(after)
+                };
+                if let Some(after) = after {
+                    let entry = next.entry(after).or_insert(SequenceMass {
+                        probability: 0.0,
+                        min_damage: u16::MAX,
+                        max_damage: 0,
+                    });
+                    entry.probability += probability;
+                    entry.min_damage = entry.min_damage.min(low);
+                    entry.max_damage = entry.max_damage.max(high);
+                } else {
+                    ko_probability += probability;
+                    min_damage = min_damage.min(low);
+                    max_damage = max_damage.max(high);
+                }
+            }
+        }
+        states = next;
+    }
+    for mass in states.values() {
+        min_damage = min_damage.min(mass.min_damage);
+        max_damage = max_damage.max(mass.max_damage);
+    }
     if min_damage == u16::MAX {
         min_damage = 0;
     }
@@ -667,163 +671,35 @@ fn sequence_damage_summary(
         max_damage,
         percent_min: min_damage as f32 * 100.0 / max_hp as f32,
         percent_max: max_damage as f32 * 100.0 / max_hp as f32,
-        ko_chance: if total_probability == 0.0 {
-            0.0
-        } else {
-            (ko_probability / total_probability) as f32
-        },
+        ko_chance: (ko_probability as f32).clamp(0.0, 1.0),
         starting_hp,
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SequenceState {
     hp: u16,
     item: Item,
     toxic_counter: u8,
 }
 
-impl SequenceState {
-    fn new(hp: u16, item: Item) -> Self {
-        Self {
-            hp,
-            item,
-            toxic_counter: 1,
-        }
+// Item has no Ord implementation. Its canonical Debug name is stable in this pinned engine.
+impl Ord for SequenceState {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.hp, self.toxic_counter)
+            .cmp(&(other.hp, other.toxic_counter))
+            .then_with(|| format!("{:?}", self.item).cmp(&format!("{:?}", other.item)))
     }
 }
-
-#[allow(clippy::too_many_arguments)]
-fn count_sequence_rolls(
-    data: &ChampionsData,
-    benchmarks: &[DamageBenchmark],
-    nature: Nature,
-    sps: StatPoints,
-    max_hp: u16,
-    cache: &mut HashMap<(usize, u16, Item), Vec<u16>>,
-    index: usize,
-    state: SequenceState,
-    running_damage: u16,
+impl PartialOrd for SequenceState {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+struct SequenceMass {
     probability: f64,
-    total_probability: &mut f64,
-    ko_probability: &mut f64,
-    min_damage: &mut u16,
-    max_damage: &mut u16,
-) -> Result<(), OptimizeError> {
-    if index == benchmarks.len() {
-        *total_probability += probability;
-        *min_damage = (*min_damage).min(running_damage);
-        *max_damage = (*max_damage).max(running_damage);
-        return Ok(());
-    }
-
-    let rolls = if let Some(rolls) = cache.get(&(index, state.hp, state.item)).cloned() {
-        rolls
-    } else {
-        let mut candidate = benchmarks[index].clone();
-        candidate.defender.nature = nature;
-        candidate.defender.stat_points = sps;
-        candidate.defender.item = Some(format!("{:?}", state.item));
-        candidate.defender_current_hp = Some(state.hp);
-        let result = calculate_benchmark(data, &candidate)?;
-        cache.insert((index, state.hp, state.item), result.damage_rolls.clone());
-        result.damage_rolls
-    };
-
-    if rolls.is_empty() {
-        *total_probability += probability;
-        *min_damage = (*min_damage).min(running_damage);
-        *max_damage = (*max_damage).max(running_damage);
-        return Ok(());
-    }
-
-    let roll_probability = probability / rolls.len() as f64;
-    for damage in rolls {
-        let next_damage = running_damage.saturating_add(damage);
-        if state.item == Item::FocusSash && state.hp == max_hp && damage >= state.hp && damage > 0 {
-            count_sequence_rolls(
-                data,
-                benchmarks,
-                nature,
-                sps,
-                max_hp,
-                cache,
-                index + 1,
-                match apply_end_turn_effects(
-                    data,
-                    &benchmarks[index],
-                    nature,
-                    sps,
-                    max_hp,
-                    SequenceState {
-                        hp: 1,
-                        item: Item::None,
-                        toxic_counter: state.toxic_counter,
-                    },
-                )? {
-                    Some(next_state) => next_state,
-                    None => {
-                        *total_probability += roll_probability;
-                        *ko_probability += roll_probability;
-                        *min_damage = (*min_damage).min(next_damage);
-                        *max_damage = (*max_damage).max(next_damage);
-                        continue;
-                    }
-                },
-                next_damage,
-                roll_probability,
-                total_probability,
-                ko_probability,
-                min_damage,
-                max_damage,
-            )?;
-            continue;
-        }
-        if damage >= state.hp {
-            *total_probability += roll_probability;
-            *ko_probability += roll_probability;
-            *min_damage = (*min_damage).min(next_damage);
-            *max_damage = (*max_damage).max(next_damage);
-            continue;
-        }
-        count_sequence_rolls(
-            data,
-            benchmarks,
-            nature,
-            sps,
-            max_hp,
-            cache,
-            index + 1,
-            match apply_end_turn_effects(
-                data,
-                &benchmarks[index],
-                nature,
-                sps,
-                max_hp,
-                SequenceState {
-                    hp: state.hp - damage,
-                    item: state.item,
-                    toxic_counter: state.toxic_counter,
-                },
-            )? {
-                Some(next_state) => next_state,
-                None => {
-                    *total_probability += roll_probability;
-                    *ko_probability += roll_probability;
-                    *min_damage = (*min_damage).min(next_damage);
-                    *max_damage = (*max_damage).max(next_damage);
-                    continue;
-                }
-            },
-            next_damage,
-            roll_probability,
-            total_probability,
-            ko_probability,
-            min_damage,
-            max_damage,
-        )?;
-    }
-    Ok(())
+    min_damage: u16,
+    max_damage: u16,
 }
 
 fn apply_end_turn_effects(
@@ -893,14 +769,6 @@ fn apply_end_turn_effects(
         Weather::None | Weather::StrongWinds => {}
     }
 
-    if state.item == Item::Leftovers {
-        healing_or_damage += residual_sixteenth as i16;
-    }
-
-    if benchmark.field.terrain == Terrain::Grassy && is_grounded(&defender, &benchmark.field) {
-        healing_or_damage += residual_sixteenth as i16;
-    }
-
     if healing_or_damage > 0 {
         state.hp = state
             .hp
@@ -911,6 +779,14 @@ fn apply_end_turn_effects(
         if state.hp == 0 {
             return Ok(None);
         }
+    }
+
+    if state.item == Item::Leftovers {
+        state.hp = state.hp.saturating_add(residual_sixteenth).min(max_hp);
+    }
+
+    if benchmark.field.terrain == Terrain::Grassy && is_grounded(&defender, &benchmark.field) {
+        state.hp = state.hp.saturating_add(residual_sixteenth).min(max_hp);
     }
 
     if !magic_guard {

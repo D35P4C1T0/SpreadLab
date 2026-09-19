@@ -24,6 +24,7 @@ pub struct BaseStats {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StatPoints {
     pub hp: u16,
     pub attack: u16,

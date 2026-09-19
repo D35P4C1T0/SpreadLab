@@ -8,6 +8,13 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
+#[wasm_bindgen(js_name = findMinSurvival)]
+pub fn find_min_survival_json(request_json: &str) -> Result<String, JsValue> {
+    to_json(crate::api::find_min_survival(from_json::<
+        crate::api::SurvivalRequest,
+    >(request_json)?))
+}
+
 #[wasm_bindgen(js_name = loadMetadata)]
 pub fn load_metadata_json() -> Result<String, JsValue> {
     to_json(load_metadata())

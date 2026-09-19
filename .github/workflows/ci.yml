@@ -17,6 +17,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -27,11 +28,11 @@ jobs:
       - name: Check default features
         run: cargo check --locked
 
-      - name: Check WebUI feature
-        run: cargo check --locked --features webui
+      - name: Check WASM library
+        run: cargo check --locked --lib --target wasm32-unknown-unknown
 
       - name: Clippy
-        run: cargo clippy --locked --all-targets --features webui -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --locked --features webui
+        run: cargo test --locked

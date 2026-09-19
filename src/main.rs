@@ -4,10 +4,10 @@ use serde::Deserialize;
 use spreadlab_rs::damage_bridge::{calculate_benchmark, DamageBenchmark};
 use spreadlab_rs::data::ChampionsData;
 use spreadlab_rs::optimize::{
-    all_natures, hp_def_combined_survival_search, hp_def_survival_search_from_hp_percent,
-    offensive_ko_search, optimize_defensive, optimize_offensive,
-    optimized_combined_defensive_natures, optimized_defensive_natures, optimized_offensive_natures,
-    CombinedSurvivalSpread, KoSpread, RankedSpread, SurvivalSpread,
+    hp_def_combined_survival_search, hp_def_survival_search_from_hp_percent, offensive_ko_search,
+    optimize_defensive, optimize_offensive, optimized_combined_defensive_natures,
+    optimized_defensive_natures, optimized_offensive_natures, CombinedSurvivalSpread, KoSpread,
+    RankedSpread, SurvivalSpread,
 };
 use spreadlab_rs::showdown::{build_champions_sp_line, parse_nature_name, parse_set};
 use spreadlab_rs::spreads::{LockedStats, SpreadSearch};
@@ -55,7 +55,12 @@ enum Command {
         #[command(subcommand)]
         mode: OptimizeCommand,
     },
-    /// Find minimum HP/Def SPs that keep KO chance under a threshold.
+    /// Exact survival search from JSON (locks, budgets, independent or sequence constraints).
+    SurviveExact {
+        #[arg(value_name = "REQUEST_JSON")]
+        request: PathBuf,
+    },
+    /// Find minimum HP/Def/SpD SPs that keep KO chance under a threshold.
     Survive {
         #[arg(long)]
         attacker: PathBuf,
@@ -82,7 +87,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Find minimum HP/Def SPs that survive two attacks in a row.
+    /// Find minimum HP/Def/SpD SPs that survive two attacks in a row.
     SurviveSequence {
         #[arg(long)]
         attacker1: PathBuf,
@@ -272,6 +277,11 @@ fn main() -> Result<()> {
             OptimizeCommand::Defensive(args) => run_optimize(args, true)?,
             OptimizeCommand::Offensive(args) => run_optimize(args, false)?,
         },
+        Command::SurviveExact { request } => {
+            let request = serde_json::from_str(&fs::read_to_string(request)?)?;
+            let result = spreadlab_rs::api::find_min_survival(request)?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
         Command::Survive {
             attacker,
             defender,
@@ -294,7 +304,7 @@ fn main() -> Result<()> {
             let natures = match nature {
                 Some(raw) => vec![parse_nature_name(&raw).context("unknown nature")?],
                 None if optimize_nature => optimized_defensive_natures(&data, &benchmark)?.to_vec(),
-                None => all_natures().to_vec(),
+                None => vec![benchmark.defender.nature],
             };
             let result = hp_def_survival_search_from_hp_percent(
                 &data,
@@ -350,7 +360,7 @@ fn main() -> Result<()> {
                 None if optimize_nature => {
                     optimized_combined_defensive_natures(&data, &benchmarks)?
                 }
-                None => all_natures().to_vec(),
+                None => vec![benchmarks[0].defender.nature],
             };
             let result = hp_def_combined_survival_search(
                 &data,
@@ -394,7 +404,7 @@ fn main() -> Result<()> {
             let natures = match nature {
                 Some(raw) => vec![parse_nature_name(&raw).context("unknown nature")?],
                 None if optimize_nature => optimized_offensive_natures(&data, &benchmark)?.to_vec(),
-                None => all_natures().to_vec(),
+                None => vec![benchmark.attacker.nature],
             };
             let result = offensive_ko_search(&data, &benchmark, &natures, min_ko_chance, limit)?;
             if json {

@@ -164,7 +164,7 @@ Find minimum offensive investment for a guaranteed KO:
 cargo run -- ko --attacker attacker.txt --defender defender.txt --move "Last Respects" --move-times-affected 1 --min-ko-chance 1.0
 ```
 
-Only compare relevant boosting nature and neutral nature:
+Search all natures (otherwise preserve the parsed nature):
 
 ```sh
 cargo run -- ko --attacker attacker.txt --defender defender.txt --move "Last Respects" --move-times-affected 1 --min-ko-chance 1.0 --optimize-nature
@@ -246,6 +246,7 @@ use spreadlab_rs::api::{
 };
 
 let result = find_min_hp_def_survival(HpDefSurvivalRequest {
+    search: None,
     attacker_set: "Kingambit\nAbility: Defiant\nSPs: 32 Atk\nAdamant Nature\n- Iron Head".into(),
     defender_set: "Mega Floette\n- Protect".into(),
     move_name: "Iron Head".into(),
@@ -255,12 +256,19 @@ let result = find_min_hp_def_survival(HpDefSurvivalRequest {
     optimize_nature: true,
     limit: 10,
     move_times_affected: 0,
+    critical: false,
     field: None,
 })?;
 
 let best = result.best.expect("at least one survival spread");
 assert_eq!(best.total_points, 24);
 ```
+
+Survival searches now enumerate HP/Defense/SpD exactly. Use
+`find_min_survival(SurvivalRequest)` / WASM `findMinSurvival` for independent
+benchmarks, explicit sequence timing, locks, lower bounds, budgets, all global
+minima, or Pareto results. CLI: `cargo run -- survive-exact examples/survival.json`.
+See [exact search contract and migration guide](docs/survival-search.md).
 
 Still to build:
 

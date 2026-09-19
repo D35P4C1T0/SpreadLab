@@ -5,6 +5,7 @@ pub mod optimize;
 pub mod showdown;
 pub mod spreads;
 pub mod stats;
+pub mod survival;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm;
 
