@@ -2,8 +2,9 @@
 use crate::damage_bridge::{build_pokemon, calculate_benchmark, DamageBenchmark};
 use crate::data::ChampionsData;
 use crate::optimize::{
-    all_natures, current_hp_from_percent, sequence_damage_summary, CombinedDamageSummary,
-    DamageSummary, OptimizeError,
+    all_natures, canonical_nature, canonical_natures, canonicalize_natures,
+    current_hp_from_percent, sequence_damage_summary, CombinedDamageSummary, DamageSummary,
+    OptimizeError,
 };
 use crate::showdown::build_champions_sp_line;
 use crate::spreads::LockedStats;
@@ -117,18 +118,17 @@ pub fn survival_natures(
     optimize: bool,
     options: &SurvivalSearchOptions,
 ) -> Vec<Nature> {
-    options.allowed_natures.clone().unwrap_or_else(|| {
-        explicit.map_or_else(
-            || {
-                if optimize {
-                    all_natures().to_vec()
-                } else {
-                    vec![parsed]
-                }
-            },
-            |nature| vec![nature],
-        )
-    })
+    if let Some(allowed) = &options.allowed_natures {
+        return canonicalize_natures(allowed);
+    }
+    if let Some(nature) = explicit {
+        return vec![canonical_nature(nature)];
+    }
+    if optimize {
+        canonical_natures()
+    } else {
+        vec![canonical_nature(parsed)]
+    }
 }
 
 fn coordinates(sps: StatPoints) -> [u16; 6] {
@@ -255,7 +255,7 @@ pub fn survival_search(
     options: &SurvivalSearchOptions,
     evaluation: &SurvivalEvaluation,
 ) -> Result<ExactSurvivalSearchResult, OptimizeError> {
-    let natures = options.allowed_natures.as_deref().unwrap_or(natures);
+    let mut natures = canonicalize_natures(options.allowed_natures.as_deref().unwrap_or(natures));
     let first = benchmarks
         .first()
         .ok_or_else(|| invalid("at least one benchmark is required"))?;
@@ -290,7 +290,6 @@ pub fn survival_search(
         }
     }
     let ranges = bounds(first.defender.stat_points, options)?;
-    let mut natures = natures.to_vec();
     natures.sort_by_key(|n| nature_index(*n));
     natures.dedup();
     let species = data.species(&first.defender.species)?;

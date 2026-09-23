@@ -292,6 +292,7 @@ pub fn offensive_ko_search(
     limit: usize,
 ) -> Result<KoSearchResult, OptimizeError> {
     crate::survival::validate_probability(min_ko_chance)?;
+    let natures = canonicalize_natures(natures);
     if natures.is_empty() || limit == 0 {
         return Err(crate::survival::invalid(
             "nature list and result limit must be nonempty",
@@ -319,7 +320,7 @@ pub fn offensive_ko_search(
     let mut matches = Vec::new();
     let mut misses = Vec::new();
 
-    for nature in natures {
+    for nature in &natures {
         for points in 0..=32 {
             if investment_stat == OffensiveInvestmentStat::None && points != 0 {
                 continue;
@@ -433,13 +434,42 @@ pub fn all_natures() -> [Nature; 25] {
     ]
 }
 
+/// The canonical representative of a nature.
+///
+/// The five neutral natures (Hardy, Docile, Serious, Bashful, Quirky) are
+/// stat-identical, so the optimizer folds every one of them onto Hardy. Raw set
+/// parsing and the stat calculator keep the original names.
+pub(crate) fn canonical_nature(nature: Nature) -> Nature {
+    match nature {
+        Nature::Bashful | Nature::Docile | Nature::Serious | Nature::Quirky => Nature::Hardy,
+        other => other,
+    }
+}
+
+/// Canonicalizes a nature list and removes duplicates, keeping first-seen order.
+pub(crate) fn canonicalize_natures(natures: &[Nature]) -> Vec<Nature> {
+    let mut canonical = Vec::with_capacity(natures.len());
+    for &nature in natures {
+        let nature = canonical_nature(nature);
+        if !canonical.contains(&nature) {
+            canonical.push(nature);
+        }
+    }
+    canonical
+}
+
+/// The all-nature optimizer domain: 21 natures after collapsing the neutrals.
+pub(crate) fn canonical_natures() -> Vec<Nature> {
+    canonicalize_natures(&all_natures())
+}
+
 /// Exact nature optimization does not discard natures based on move category.
 pub fn optimized_offensive_natures(
     data: &ChampionsData,
     benchmark: &DamageBenchmark,
 ) -> Result<Vec<Nature>, OptimizeError> {
     data.move_data(&benchmark.move_name)?;
-    Ok(all_natures().to_vec())
+    Ok(canonical_natures())
 }
 
 pub fn optimized_defensive_natures(
@@ -447,7 +477,7 @@ pub fn optimized_defensive_natures(
     benchmark: &DamageBenchmark,
 ) -> Result<Vec<Nature>, OptimizeError> {
     data.move_data(&benchmark.move_name)?;
-    Ok(all_natures().to_vec())
+    Ok(canonical_natures())
 }
 
 pub fn optimized_combined_defensive_natures(
@@ -457,7 +487,7 @@ pub fn optimized_combined_defensive_natures(
     for benchmark in benchmarks {
         data.move_data(&benchmark.move_name)?;
     }
-    Ok(all_natures().to_vec())
+    Ok(canonical_natures())
 }
 
 fn optimize(

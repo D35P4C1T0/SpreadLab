@@ -4,12 +4,12 @@ use spreadlab_rs::{
     damage_bridge::{calculate_benchmark, DamageBenchmark},
     data::ChampionsData,
     optimize::{hp_def_survival_search, offensive_ko_search, OffensiveInvestmentStat},
-    showdown::parse_set,
+    showdown::{parse_nature_name, parse_set},
     spreads::LockedStats,
     stats::champions_final_stats,
     survival::{
-        survival_search, ExactSurvivalSpread, SurvivalEvaluation, SurvivalResultMode,
-        SurvivalSearchOptions,
+        survival_natures, survival_search, ExactSurvivalSpread, SurvivalEvaluation,
+        SurvivalResultMode, SurvivalSearchOptions,
     },
     StatPoints,
 };
@@ -470,16 +470,162 @@ fn api_preserves_nature_and_accepts_explicit_allowed_natures() {
     );
     let mut optimized = request.clone();
     optimized.optimize_nature = true;
-    assert_eq!(
-        find_min_survival_with_data(&data, optimized)
-            .unwrap()
-            .matches
-            .len(),
-        25
-    );
+    let optimized = find_min_survival_with_data(&data, optimized).unwrap();
+    assert_eq!(optimized.matches.len(), 21);
+    assert!(optimized.matches.iter().all(|spread| !matches!(
+        spread.nature,
+        Nature::Bashful | Nature::Docile | Nature::Serious | Nature::Quirky
+    )));
     let mut empty = request;
     empty.search.allowed_natures = Some(vec![]);
     assert!(find_min_survival_with_data(&data, empty).is_err());
+}
+
+#[test]
+fn neutral_natures_canonicalize_to_hardy_at_optimizer_boundaries() {
+    let data = ChampionsData::load().unwrap();
+    let request: SurvivalRequest = serde_json::from_value(serde_json::json!({
+        "defender_set": "Mega Salamence\nBashful Nature",
+        "hits": [{"attacker_set": "Pikachu", "move_name": "Tackle", "move_times_affected": 0}],
+        "max_ko_chances": [0.0], "search": {"result_mode": "AllMinima"}
+    }))
+    .unwrap();
+
+    // Parsed neutral defender set yields Hardy.
+    let parsed = find_min_survival_with_data(&data, request.clone()).unwrap();
+    assert_eq!(parsed.matches.len(), 1);
+    assert_eq!(parsed.matches[0].nature, Nature::Hardy);
+
+    // Explicit non-Hardy neutral request yields Hardy.
+    let mut explicit = request.clone();
+    explicit.nature = Some(Nature::Quirky);
+    let explicit = find_min_survival_with_data(&data, explicit).unwrap();
+    assert!(explicit
+        .matches
+        .iter()
+        .all(|spread| spread.nature == Nature::Hardy));
+
+    // Allowed list with mixed neutrals and duplicates canonicalizes and dedups.
+    let mut allowed = request.clone();
+    allowed.search.allowed_natures = Some(vec![
+        Nature::Serious,
+        Nature::Bold,
+        Nature::Docile,
+        Nature::Bold,
+    ]);
+    let allowed = find_min_survival_with_data(&data, allowed).unwrap();
+    let allowed_natures = distinct_natures(&allowed.matches);
+    assert_eq!(allowed_natures, vec![Nature::Bold, Nature::Hardy]);
+
+    // All-neutral allowed list collapses to a single Hardy search.
+    let mut neutrals = request.clone();
+    neutrals.search.allowed_natures = Some(vec![Nature::Bashful, Nature::Hardy, Nature::Serious]);
+    let neutrals = find_min_survival_with_data(&data, neutrals).unwrap();
+    assert!(neutrals
+        .matches
+        .iter()
+        .all(|spread| spread.nature == Nature::Hardy));
+    assert_eq!(neutrals.matches.len(), 1);
+
+    // The raw parser and stat calculator still understand the original names.
+    assert_eq!(parse_nature_name("Bashful"), Some(Nature::Bashful));
+    assert_eq!(parse_nature_name("Docile"), Some(Nature::Docile));
+    let sps = spreadlab_rs::StatPoints::new(4, 0, 0, 0, 0, 0);
+    let species = data.species("Mega Salamence").unwrap();
+    assert_eq!(
+        champions_final_stats(species.base_stats(), Nature::Bashful, sps).unwrap(),
+        champions_final_stats(species.base_stats(), Nature::Hardy, sps).unwrap()
+    );
+}
+
+fn distinct_natures(matches: &[spreadlab_rs::survival::ExactSurvivalSpread]) -> Vec<Nature> {
+    let mut seen = Vec::new();
+    for spread in matches {
+        if !seen.contains(&spread.nature) {
+            seen.push(spread.nature);
+        }
+    }
+    seen
+}
+
+#[test]
+fn nature_selectors_canonicalize_neutrals() {
+    let options = SurvivalSearchOptions::default();
+    assert_eq!(
+        survival_natures(Nature::Docile, None, false, &options),
+        vec![Nature::Hardy]
+    );
+    assert_eq!(
+        survival_natures(Nature::Hardy, Some(Nature::Serious), false, &options),
+        vec![Nature::Hardy]
+    );
+    let mut allowed = options.clone();
+    allowed.allowed_natures = Some(vec![Nature::Quirky, Nature::Jolly, Nature::Bashful]);
+    assert_eq!(
+        survival_natures(Nature::Hardy, None, false, &allowed),
+        vec![Nature::Hardy, Nature::Jolly]
+    );
+    assert_eq!(
+        survival_natures(Nature::Hardy, None, true, &options).len(),
+        21
+    );
+}
+
+#[test]
+fn low_level_searches_canonicalize_neutral_inputs() {
+    let data = ChampionsData::load().unwrap();
+
+    // Offensive KO search backstop: a neutral-heavy list equals Hardy alone.
+    let offense = benchmark(
+        "Kingambit\nAbility: Defiant\nSPs: 32 Atk\nAdamant Nature",
+        "Mega Salamence",
+        "Iron Head",
+    );
+    let neutral = offensive_ko_search(
+        &data,
+        &offense,
+        &[Nature::Quirky, Nature::Hardy, Nature::Docile],
+        0.0,
+        10,
+    )
+    .unwrap();
+    let hardy = offensive_ko_search(&data, &offense, &[Nature::Hardy], 0.0, 10).unwrap();
+    assert_eq!(
+        serde_json::to_value(&neutral).unwrap(),
+        serde_json::to_value(&hardy).unwrap()
+    );
+    assert!(neutral
+        .matches
+        .iter()
+        .all(|spread| spread.nature == Nature::Hardy));
+
+    // Direct survival_search happy path, bypassing the survival_natures selector.
+    let options = SurvivalSearchOptions::default();
+    let dragon = dragon();
+    let neutral = survival_search(
+        &data,
+        std::slice::from_ref(&dragon),
+        &[Nature::Serious, Nature::Bashful],
+        &[0.25],
+        100.0,
+        &options,
+        &SurvivalEvaluation::Independent,
+    )
+    .unwrap();
+    let hardy = survival_search(
+        &data,
+        std::slice::from_ref(&dragon),
+        &[Nature::Hardy],
+        &[0.25],
+        100.0,
+        &options,
+        &SurvivalEvaluation::Independent,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&neutral).unwrap(),
+        serde_json::to_value(&hardy).unwrap()
+    );
 }
 
 #[test]

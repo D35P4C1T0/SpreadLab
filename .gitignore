@@ -13,3 +13,6 @@
 
 # Local damage-lib patch scratch files should stay local.
 Cargo.toml.orig
+
+# Local agent reports and benchmark artifacts.
+/docs/agent-work/

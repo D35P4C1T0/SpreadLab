@@ -8,6 +8,7 @@ use damage_calc::data::champions::{
 use damage_calc::{Ability, Category, Item, Move, PokemonType};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use thiserror::Error;
 
 pub use damage_calc::data::champions::CHAMPIONS_ITEMS as POKEMON_CHAMPIONS_ITEMS;
@@ -284,15 +285,38 @@ pub fn parse_category(raw: &str) -> Result<Category, DataError> {
     })
 }
 
+/// Normalized reference ability names, built once. First match wins, matching
+/// the original linear scan order.
+fn reference_ability_map() -> &'static HashMap<String, Ability> {
+    static MAP: OnceLock<HashMap<String, Ability>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        let mut map = HashMap::with_capacity(CHAMPIONS_REFERENCE_ABILITY_VALUES.len());
+        for &(name, value) in CHAMPIONS_REFERENCE_ABILITY_VALUES {
+            map.entry(normalize_name(name)).or_insert(value);
+        }
+        map
+    })
+}
+
+/// Normalized reference item names, built once. First match wins, matching the
+/// original linear scan order.
+fn reference_item_map() -> &'static HashMap<String, Item> {
+    static MAP: OnceLock<HashMap<String, Item>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        let mut map = HashMap::with_capacity(CHAMPIONS_ITEM_VALUES.len());
+        for &(name, value) in CHAMPIONS_ITEM_VALUES {
+            map.entry(normalize_name(name)).or_insert(value);
+        }
+        map
+    })
+}
+
 pub fn parse_ability(raw: &str) -> Result<Ability, DataError> {
     let key = normalize_name(raw);
-    if let Some((_, value)) = CHAMPIONS_REFERENCE_ABILITY_VALUES
-        .iter()
-        .find(|(name, _)| normalize_name(name) == key)
-    {
+    if let Some(value) = reference_ability_map().get(&key) {
         return Ok(*value);
     }
-    Ok(match normalize_name(raw).as_str() {
+    Ok(match key.as_str() {
         "" | "none" | "nothing" => Ability::None,
         "adaptability" => Ability::Adaptability,
         "aerilate" => Ability::Aerilate,
@@ -460,13 +484,10 @@ pub fn parse_ability(raw: &str) -> Result<Ability, DataError> {
 
 pub fn parse_item(raw: &str) -> Result<Item, DataError> {
     let key = normalize_name(raw);
-    if let Some((_, value)) = CHAMPIONS_ITEM_VALUES
-        .iter()
-        .find(|(name, _)| normalize_name(name) == key)
-    {
+    if let Some(value) = reference_item_map().get(&key) {
         return Ok(*value);
     }
-    Ok(match normalize_name(raw).as_str() {
+    Ok(match key.as_str() {
         "" | "none" | "nothing" => Item::None,
         "abilityshield" => Item::AbilityShield,
         "adrenalineorb" => Item::AdrenalineOrb,
@@ -863,5 +884,34 @@ mod tests {
         for item in POKEMON_CHAMPIONS_ITEMS {
             parse_item(item).unwrap_or_else(|err| panic!("{item} failed to parse: {err}"));
         }
+    }
+
+    #[test]
+    fn reference_lookups_keep_first_match_and_alias_parity() {
+        // Every reference entry resolves to its first-declared value (the cached
+        // map must not reorder or overwrite precedence).
+        for &(name, expected) in CHAMPIONS_ITEM_VALUES {
+            assert_eq!(parse_item(name).unwrap(), expected, "{name}");
+        }
+        for &(name, expected) in CHAMPIONS_REFERENCE_ABILITY_VALUES {
+            assert_eq!(parse_ability(name).unwrap(), expected, "{name}");
+        }
+        // Case- and punctuation-insensitive aliases still resolve.
+        assert_eq!(parse_item("life orb").unwrap(), Item::LifeOrb);
+        assert_eq!(parse_item("LIFE-ORB").unwrap(), Item::LifeOrb);
+        assert_eq!(parse_item("").unwrap(), Item::None);
+        assert_eq!(parse_item("none").unwrap(), Item::None);
+        assert_eq!(parse_ability("mind eye").unwrap(), Ability::MindEye);
+        assert_eq!(parse_ability("mindseye").unwrap(), Ability::MindEye);
+        assert_eq!(parse_ability("").unwrap(), Ability::None);
+        // Unknown names keep the original raw text in the error.
+        assert!(matches!(
+            parse_item("Not A Real Item"),
+            Err(DataError::UnknownItem(name)) if name == "Not A Real Item"
+        ));
+        assert!(matches!(
+            parse_ability("Not A Real Ability"),
+            Err(DataError::UnknownAbility(name)) if name == "Not A Real Ability"
+        ));
     }
 }

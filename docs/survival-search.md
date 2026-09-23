@@ -50,8 +50,16 @@ Precedence, highest first:
 
 1. `search.allowed_natures`, a nonempty list (duplicates are removed).
 2. Explicit `nature`.
-3. All 25 natures when `optimize_nature` is true.
+3. All 21 canonical natures when `optimize_nature` is true.
 4. The defender set's parsed nature, Hardy if omitted.
+
+The five neutral natures (Hardy, Docile, Serious, Bashful, Quirky) are
+stat-identical, so every optimizer boundary canonicalizes them to Hardy. An
+explicit non-Hardy neutral request, a parsed neutral set, and a neutral entry in
+an allowed list all resolve to a single Hardy candidate; duplicate entries are
+removed. All-nature search therefore explores the 21 distinct natures. Raw set
+parsing and the stat calculator still accept and return the original neutral
+names.
 
 All-nature search preserves natures with identical defensive outcomes. It does
 not decide which offensive stat the player can afford to reduce. Use the allowed
@@ -147,7 +155,9 @@ residuals. The low-level `*_with_options` functions expose the same controls.
 
 Nature behavior is intentionally corrected across survival and offensive KO APIs
 and CLI commands: `optimize_nature: false` no longer silently searches all natures.
-`true` searches all natures rather than assuming Bold/Calm/Adamant/Modest suffice.
+`true` searches the 21 canonical natures rather than assuming
+Bold/Calm/Adamant/Modest suffice, with every neutral nature (Hardy, Docile,
+Serious, Bashful, Quirky) folded onto Hardy.
 The offensive one-stat search now uses Defense for Body Press, no attacker
 investment dimension for Foul Play, and preserves other parsed investments.
 Its guarantee remains restricted to its selected investment stat and nature list.
