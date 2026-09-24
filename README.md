@@ -270,6 +270,22 @@ benchmarks, explicit sequence timing, locks, lower bounds, budgets, all global
 minima, or Pareto results. CLI: `cargo run -- survive-exact examples/survival.json`.
 See [exact search contract and migration guide](docs/survival-search.md).
 
+A defensive stat the pinned engine cannot read is not searched: an ordinary
+physical-only benchmark never invests SpD, and an ordinary special-only benchmark
+never invests Defense. The stat is held at its lock or lower bound, so add
+`minimum` or `locked` when a specific value matters. Mixed benchmark sets keep
+both defenses, Psyshock keeps the Defense it resolves against, and the reported
+minimum cost and KO probabilities are unaffected by the narrower domain.
+
+`optimize defensive`/`optimize offensive` rank scores rather than minimum
+investment, and they apply the same rule whenever the request is not a full-spend
+one, so ranked rows no longer differ only in an irrelevant defensive stat.
+Unrelated offensive stats are still generated and ranked as before. A full-spend
+request still has to reach its exact total: with the offensive stats locked, the
+remaining points land in whatever free stat can absorb them (`32 HP / 32 Def /
+2 SpD` for a physical benchmark), which is the requested total, not freely varied
+investment.
+
 Still to build:
 
 - richer item/ability resolver coverage

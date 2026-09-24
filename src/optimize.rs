@@ -493,10 +493,31 @@ pub fn optimized_combined_defensive_natures(
 fn optimize(
     data: &ChampionsData,
     benchmarks: &[DamageBenchmark],
-    search: SpreadSearch,
+    mut search: SpreadSearch,
     limit: usize,
     mode: OptimizationMode,
 ) -> Result<Vec<RankedSpread>, OptimizeError> {
+    // A defensive stat the pinned engine cannot read never changes the score, so it is
+    // locked to its requested value (zero by default) instead of being varied. Defensive
+    // ranking varies the defender's spread, offensive ranking the attacker's. A
+    // full-spend request must still reach its exact total, so the pin only applies when
+    // the total is a cap.
+    if search.exact_total.is_none() {
+        let relevance = match mode {
+            OptimizationMode::Defensive => {
+                crate::relevance::combined_defender_relevance(data, benchmarks)?
+            }
+            OptimizationMode::Offensive => {
+                crate::relevance::combined_attacker_relevance(data, benchmarks)?
+            }
+        };
+        if !relevance.defense {
+            search.locked.defense = Some(search.locked.defense.unwrap_or(0));
+        }
+        if !relevance.special_defense {
+            search.locked.special_defense = Some(search.locked.special_defense.unwrap_or(0));
+        }
+    }
     let mut ranked = Vec::new();
 
     for sps in generate_spreads(search) {

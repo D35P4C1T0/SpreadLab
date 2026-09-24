@@ -142,6 +142,15 @@ fn coordinates(sps: StatPoints) -> [u16; 6] {
     ]
 }
 
+/// Indices of the defensive coordinates, matching [`coordinates`] order.
+const DEFENSE: usize = 2;
+const SPECIAL_DEFENSE: usize = 4;
+
+/// Collapses a dimension to its lower bound, keeping its lock or lower bound value.
+fn pinned(range: (u16, u16)) -> (u16, u16) {
+    (range.0, range.0)
+}
+
 fn from_coordinates(x: [u16; 6]) -> StatPoints {
     StatPoints::new(x[0], x[1], x[2], x[3], x[4], x[5])
 }
@@ -289,7 +298,17 @@ pub fn survival_search(
             return Err(invalid("all benchmarks must use the same defender set"));
         }
     }
-    let ranges = bounds(first.defender.stat_points, options)?;
+    // Only defensive stats the engine can read stay search dimensions. The other one
+    // keeps its lock or lower bound and is never varied freely, which cannot move the
+    // minimum cost or a KO threshold because it does not enter the damage result.
+    let relevance = crate::relevance::combined_defender_relevance(data, benchmarks)?;
+    let mut ranges = bounds(first.defender.stat_points, options)?;
+    if !relevance.defense {
+        ranges[DEFENSE] = pinned(ranges[DEFENSE]);
+    }
+    if !relevance.special_defense {
+        ranges[SPECIAL_DEFENSE] = pinned(ranges[SPECIAL_DEFENSE]);
+    }
     natures.sort_by_key(|n| nature_index(*n));
     natures.dedup();
     let species = data.species(&first.defender.species)?;

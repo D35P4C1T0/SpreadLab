@@ -18,7 +18,9 @@ For each allowed nature, enumerate integer HP, Defense, and Special Defense
 allocations in `[0,32]`, subject to exact locks and lower bounds. Preserve the
 parsed Attack, Special Attack, and Speed investments unless explicitly overridden
 by locks. The total of **all six stats** must not exceed `search.max_total`
-(default 66; values above 66 are rejected).
+(default 66; values above 66 are rejected). A defense the engine cannot read for
+the request is held at its lock or lower bound instead of being enumerated; see
+Defensive-stat relevance below.
 
 Minimize the total of all six stats. This is final investment, not investment
 added to a baseline. Parsed HP/Defense/SpD are replaceable: use `search.minimum`
@@ -37,12 +39,55 @@ This reserves 47 points outside defense and leaves 19 points for HP/Def/SpD.
 Conflicting locks/lower bounds and per-stat values above 32 are errors. A valid
 domain with no allocation fitting its budget returns no matches.
 
-The engine evaluates **every allocation in a total-cost layer before stopping**.
-No greedy allocation, category-based dimension elimination, binary search, or
-monotonicity assumption is used. It therefore finds global minima within the
+The engine evaluates **every allocation in a total-cost layer before stopping**,
+where that layer spans the retained domain described under Defensive-stat
+relevance. No greedy allocation, binary search, or monotonicity assumption is
+used, and no dimension is dropped from move names or from category alone: a
+defense is pinned only when the pinned engine's own resolved metadata proves it
+cannot enter the damage result. It therefore finds global minima within the
 declared domain and feasibility model. This is not unrestricted six-stat
 optimization: Attack/SpA/Speed stay fixed even for moves affected by those stats.
 It also does not independently verify the pinned damage engine's battle mechanics.
+
+## Defensive-stat relevance
+
+The pinned engine reads the defender's Defense for
+`category == Physical || deals_physical_damage` moves and Special Defense
+otherwise. A defensive stat the engine cannot read is **pinned to its lock or lower
+bound** instead of being searched, so an ordinary physical-only benchmark never
+invests SpD and an ordinary special-only benchmark never invests Defense. A lock
+or `minimum` on the pinned stat is honored exactly; only the values above it are
+dropped.
+
+The pin cannot change the answer: the pinned stat does not enter the damage result,
+so `minimum_total`, every KO threshold, and the `AllMinima` layer are the same as
+with the full HP/Defense/SpD domain. What changes is the reported allocation.
+`TopK` rows no longer include spreads that differ only in a defensive stat the
+engine cannot read for the request, and `closest_miss` and `Pareto` report the
+pinned representative of an objective, because the alternatives were dominated by
+it.
+
+Relevance is decided per benchmark and unioned across benchmarks, so a mixed set
+keeps both defenses.
+
+Overrides are not fallbacks. When the resolved metadata names a different
+defensive stat than the move's category does, that stat is the one searched:
+Psyshock is Special in the pinned metadata but carries the engine's
+`deals_physical_damage` flag (it is the only pinned move that does), so Defense
+stays a dimension for it and SpD is the pinned one. The rule reads the same
+resolved metadata the damage engine receives rather than the category alone.
+
+The search falls back to the full dual-defense domain whenever the engine may read
+both defensive stats:
+
+- The move's damage does not come from the standard formula (Status category or
+  zero base power), so nothing about it is proven.
+- The engine compares both defensive stats. `check_download` picks the attacker's
+  boost from the defender's Defense and SpD, `check_trace` can move an ability
+  between the two sides, and an active paradox ability makes `highest_stat`
+  compare every stat for the defense modifier and for move order. None of these
+  abilities are in the pinned Champions ability list today; the checks exist so a
+  future re-pin cannot silently under-search.
 
 ## Nature selection
 
@@ -63,8 +108,9 @@ names.
 
 All-nature search preserves natures with identical defensive outcomes. It does
 not decide which offensive stat the player can afford to reduce. Use the allowed
-list to enforce that choice. Psyshock and other defensive-stat overrides need
-no special search pruning: every defensive allocation is evaluated by the engine.
+list to enforce that choice. Defensive-stat overrides such as Psyshock are handled
+by relevance, not by nature selection: every allocation in the kept defensive
+dimension is evaluated by the engine (see Defensive-stat relevance above).
 
 ## Feasibility models
 
@@ -137,8 +183,9 @@ success and forces evaluation of the full domain. It may still be null if no
 candidate fails. Pareto mode also requires full-domain evaluation.
 
 The default domain contains at most 35,937 allocations per nature before total
-budget filtering. All-nature, Pareto, and full closest-miss searches can be
-substantially more expensive than first-layer minimization.
+budget filtering, or 1,089 when relevance pins one of the two defenses. All-nature,
+Pareto, and full closest-miss searches can be substantially more expensive than
+first-layer minimization.
 
 ## Migration
 
@@ -162,9 +209,19 @@ The offensive one-stat search now uses Defense for Body Press, no attacker
 investment dimension for Foul Play, and preserves other parsed investments.
 Its guarantee remains restricted to its selected investment stat and nature list.
 
+Defensive-stat relevance narrows the searched domain in the survival and score
+ranking APIs: rows no longer report a defense that cannot affect the request. The
+declared minimum, locks, lower bounds, KO thresholds, nature list, and total budget
+all keep their meaning. Callers that relied on seeing SpD variants of a physical
+minimum, or Defense variants of a special one, should add `minimum` or `locked` for
+that stat instead.
+
 `run_defensive_optimization`/`run_offensive_optimization` remain **score-ranking**
 APIs for compatibility, not minimum-investment solvers. Use `find_min_survival`
 with independent constraints instead of interpreting their scores as a minimum.
+When such a request is not a full-spend one, the defense the engine cannot read is
+held at its locked value (zero unless locked), and Body Press keeps the attacker's
+Defense because that is its attack stat.
 
 The legacy raw stat calculator/parser can still represent spreads over 66 for
 damage inspection; legal optimization candidates always obey the total cap.

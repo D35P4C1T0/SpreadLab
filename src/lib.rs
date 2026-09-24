@@ -2,6 +2,7 @@ pub mod api;
 pub mod damage_bridge;
 pub mod data;
 pub mod optimize;
+pub mod relevance;
 pub mod showdown;
 pub mod spreads;
 pub mod stats;
